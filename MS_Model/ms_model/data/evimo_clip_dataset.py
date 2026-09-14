@@ -11,8 +11,9 @@ Format attendu par le forward d'entraînement de DEVO (cf. train.py) :
     intrinsics : (4,) = [fx, fy, cx, cy]
 
 Chargement **paresseux** (lazy) :
-- Les voxels sont lus par mmap depuis le cache disque `<npz>.voxels_bins{N}.npy` (préproduit par
-  `EvimoSegDataset`) → slice de clip = quelques MB de disque, pas de voxelisation à la volée.
+- Les voxels sont lus par mmap depuis le cache disque `<npz>.voxels_bins{N}.npy` (construit au
+  premier accès par `ensure_voxel_cache`, ou à l'avance par `scripts/preprocess_voxels.py`)
+  → slice de clip = quelques MB de disque, pas de voxelisation par clip.
 - depth / mask GT (compressés dans le npz, ~2 GB décompressés chacun) sont chargés à la demande
   au niveau **séquence**, avec un petit cache LRU par worker (`cache_size` séquences). Peak RAM
   ≈ num_workers × cache_size × ~2 GB (depth) + O(mask compressed).
@@ -35,7 +36,7 @@ from torch.utils.data import Dataset
 
 from ms_model.io.masks import FrameMasks
 from ms_model.masking import thicken_mask
-from ms_model.data.evimo_dataset import downsample_mask
+from ms_model.data.evimo_dataset import downsample_mask, ensure_voxel_cache
 
 
 def evimo_cam_to_pose7(frame: dict) -> np.ndarray:
@@ -46,10 +47,6 @@ def evimo_cam_to_pose7(frame: dict) -> np.ndarray:
     c = frame["cam"]["pos"]
     t, q = c["t"], c["q"]
     return np.array([t["x"], t["y"], t["z"], q["x"], q["y"], q["z"], q["w"]], dtype=np.float64)
-
-
-def _voxel_cache_path(npz_path: Path, nb_time_bins: int) -> Path:
-    return npz_path.with_suffix(f".voxels_bins{nb_time_bins}.npy")
 
 
 def _read_meta_and_poses(npz_path: Path):
@@ -147,12 +144,7 @@ class EvimoClipDataset(Dataset):
         self.index: list[tuple] = []  # (seq_idx, start)
 
         for si, path in enumerate(self.paths):
-            vpath = _voxel_cache_path(path, nb_time_bins)
-            if not vpath.exists():
-                raise FileNotFoundError(
-                    f"[EvimoClipDataset] cache voxel manquant : {vpath}\n"
-                    f"    Le cache est produit automatiquement par EvimoSegDataset ; sinon "
-                    f"le régénérer via make_voxel_sequence.")
+            vpath = ensure_voxel_cache(path, nb_time_bins)
             # header mmap only — no data pulled from disk yet
             N_vox = np.load(vpath, mmap_mode="r").shape[0]
 

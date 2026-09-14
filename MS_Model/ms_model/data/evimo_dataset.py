@@ -20,6 +20,40 @@ def downsample_mask(mask: np.ndarray, patch_size: int) -> torch.Tensor:
     return out[0, 0]
 
 
+def ensure_voxel_cache(
+    path: Union[str, Path],
+    nb_time_bins: int,
+    frame_ts: np.ndarray | None = None,
+    overwrite: bool = False,
+) -> Path:
+    """Chemin du cache disque `<séquence>.voxels_bins<N>.npy`, construit s'il manque.
+
+    Le cache contient une voxel grid par intervalle entre deux frames GT ; il est lu en
+    memmap par EvimoSegDataset et EvimoClipDataset. Un ancien cache .pt est migré.
+    L'écriture passe par un fichier temporaire pour ne jamais laisser de cache tronqué.
+    """
+    path = Path(path)
+    cache_path = path.with_suffix(f".voxels_bins{nb_time_bins}.npy")
+    if cache_path.exists() and not overwrite:
+        return cache_path
+
+    old_cache = path.with_suffix(f".voxels_bins{nb_time_bins}.pt")
+    if old_cache.exists() and not overwrite:
+        print(f"[voxel cache] migration .pt → .npy : {old_cache}", flush=True)
+        voxel_seq = torch.load(old_cache)
+    else:
+        print(f"[voxel cache] construction : {cache_path}", flush=True)
+        if frame_ts is None:
+            frame_ts = load_evimo_mask(path).ts
+        voxel_seq = make_voxel_sequence(load_events(path), frame_ts, nb_of_time_bins=nb_time_bins)
+
+    tmp_path = cache_path.with_name(cache_path.name + ".tmp")
+    with open(tmp_path, "wb") as f:
+        np.save(f, voxel_seq.numpy())
+    tmp_path.replace(cache_path)
+    return cache_path
+
+
 class EvimoSegDataset(Dataset):
     """Séquences (voxel grids, masques dynamiques par patch) pour la motion segmentation.
 
@@ -49,19 +83,7 @@ class EvimoSegDataset(Dataset):
             if mask_thicken_radius > 0:
                 fm = thicken_mask(fm, radius=mask_thicken_radius)
 
-            cache_path = Path(path).with_suffix(f".voxels_bins{nb_time_bins}.npy")
-
-            if not cache_path.exists():
-                # Ancienne cache .pt présente → migration transparente
-                old_cache = Path(path).with_suffix(f".voxels_bins{nb_time_bins}.pt")
-                if old_cache.exists():
-                    print(f"[EvimoSegDataset]   migration .pt → .npy ...", flush=True)
-                    voxel_seq = torch.load(old_cache)
-                    np.save(cache_path, voxel_seq.numpy())
-                else:
-                    ea = load_events(path)
-                    voxel_seq = make_voxel_sequence(ea, fm.ts, nb_of_time_bins=nb_time_bins)
-                    np.save(cache_path, voxel_seq.numpy())
+            cache_path = ensure_voxel_cache(path, nb_time_bins, frame_ts=fm.ts)
 
             # Memmap : l'OS ne charge en RAM que les pages réellement accédées
             voxel_mmap = np.load(cache_path, mmap_mode='r')

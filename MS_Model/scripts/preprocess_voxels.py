@@ -1,14 +1,19 @@
 """Prétraitement offline des voxel grids EVIMO.
 
-Calcule et sauvegarde les tenseurs voxelisés (.voxels_bins<N>.npy) à côté de
-chaque .npz, sans lancer d'entraînement. À exécuter une seule fois sur un
-nœud CPU avant de soumettre les jobs GPU.
+Calcule et sauvegarde les voxel grids (`<séquence>.voxels_bins<N>.npy`) à côté de chaque
+séquence, sans lancer d'entraînement. Facultatif : EvimoSegDataset et EvimoClipDataset
+construisent le cache à la volée s'il manque ; ce script permet de le faire une seule fois
+sur un nœud CPU avant de soumettre les jobs GPU.
+
+Séquences reconnues sous --data-root :
+- EVIMO2 : répertoires contenant `dataset_info.npz` ;
+- EVIMO1 : fichiers `*.npz` (hors fichiers `dataset_*.npz` des répertoires EVIMO2).
 
 Le format .npy permet un chargement lazy via numpy memmap (pas d'OOM même sur
 de grands datasets). Les anciens caches .pt sont migrés automatiquement.
 
 Usage :
-    python scripts/preprocess_voxels.py --data-root ../datasets/evimo_full
+    python scripts/preprocess_voxels.py --data-root ../datasets/evimo2/samsung_mono/imo/train
     python scripts/preprocess_voxels.py --data-root ../datasets/evimo_full --nb-time-bins 5
 """
 
@@ -16,58 +21,45 @@ import argparse
 import time
 from pathlib import Path
 
-from ms_model.io.loaders import load_events, load_evimo_mask
-from ms_model.representations.voxel import make_voxel_sequence
-
 import numpy as np
 
-try:
-    import torch  # noqa: F401 — vérifie la présence de torch pour make_voxel_sequence
-except ImportError:
-    raise SystemExit("torch n'est pas installé dans l'environnement courant.")
+from ms_model.data.evimo_dataset import ensure_voxel_cache
+
+
+def find_sequences(root: Path) -> list[Path]:
+    evimo2_dirs = sorted(p.parent for p in root.rglob("dataset_info.npz"))
+    evimo1_npz = sorted(p for p in root.rglob("*.npz") if not p.name.startswith("dataset_"))
+    return evimo2_dirs + evimo1_npz
 
 
 def preprocess(data_root: str, nb_time_bins: int, force: bool) -> None:
     root = Path(data_root)
-    npz_files = sorted(root.rglob("*.npz"))
+    sequences = find_sequences(root)
 
-    if not npz_files:
-        print(f"Aucun fichier .npz trouvé dans {root}")
+    if not sequences:
+        print(f"Aucune séquence EVIMO trouvée dans {root}")
         return
 
-    print(f"{len(npz_files)} fichiers .npz trouvés dans {root}\n")
+    print(f"{len(sequences)} séquences trouvées dans {root}\n")
 
-    for i, npz_path in enumerate(npz_files, 1):
-        cache_path = npz_path.with_suffix(f".voxels_bins{nb_time_bins}.npy")
-        old_pt     = npz_path.with_suffix(f".voxels_bins{nb_time_bins}.pt")
-
+    for i, seq in enumerate(sequences, 1):
+        cache_path = seq.with_suffix(f".voxels_bins{nb_time_bins}.npy")
         if cache_path.exists() and not force:
-            print(f"[{i}/{len(npz_files)}] {npz_path.name} — cache déjà présent, ignoré")
+            print(f"[{i}/{len(sequences)}] {seq.name} — cache déjà présent, ignoré")
             continue
 
         t0 = time.time()
-        print(f"[{i}/{len(npz_files)}] {npz_path.name} ...", end=" ", flush=True)
-
-        if old_pt.exists() and not force:
-            import torch as _torch
-            voxel_seq = _torch.load(old_pt)
-            arr = voxel_seq.numpy()
-        else:
-            ea = load_events(npz_path)
-            fm = load_evimo_mask(npz_path)
-            import torch as _torch
-            voxel_seq = make_voxel_sequence(ea, fm.ts, nb_of_time_bins=nb_time_bins)
-            arr = voxel_seq.numpy()
-
-        np.save(cache_path, arr)
-        print(f"{arr.shape[0]} frames, {time.time() - t0:.1f}s")
+        print(f"[{i}/{len(sequences)}] {seq.name} ...", flush=True)
+        cache_path = ensure_voxel_cache(seq, nb_time_bins, overwrite=force)
+        n = np.load(cache_path, mmap_mode="r").shape[0]
+        print(f"    {n} frames, {time.time() - t0:.1f}s")
 
     print("\nPrétraitement terminé.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-root",     required=True, help="Racine du dataset EVIMO")
+    parser.add_argument("--data-root",     required=True, help="Racine du dataset EVIMO (EVIMO1 ou EVIMO2)")
     parser.add_argument("--nb-time-bins",  type=int, default=5)
     parser.add_argument("--force",         action="store_true", help="Recalculer même si le cache existe")
     args = parser.parse_args()
