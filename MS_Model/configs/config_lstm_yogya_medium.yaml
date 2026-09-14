@@ -1,0 +1,39 @@
+data:
+  root: ../datasets/EV-IMO/eval
+
+  train_sequences:
+    - box/npz/seq_00.npz
+    - box/npz/seq_02.npz
+    - box/npz/seq_04.npz
+    - fast/npz/seq_00.npz
+    - floor/npz/seq_00.npz
+    - table/npz/seq_01.npz
+    - wall/npz/seq_00.npz
+
+  val_sequences:
+    - tabletop/npz/seq_00.npz
+    - tabletop/npz/seq_02.npz
+    - box/npz/seq_05.npz
+
+  seq_len: 16
+  nb_time_bins: 5
+  patch_size: 4
+  mask_thicken_radius: 3
+
+model:
+  name: convlstm
+  hidden_dim: 64
+
+training:
+  epochs: 50
+  batch_size: 8
+  lr: 1.0e-3
+  loss: bce
+  # loss_pos_weight: 10.0  # décommenter pour pondérer les patches dynamiques (BCE uniquement)
+  num_workers: 4
+  checkpoint_dir: checkpoints
+
+wandb:
+  project: ms-model
+  entity: arthurfou-cole-polytechnique
+  name: ""
