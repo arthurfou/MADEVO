@@ -149,24 +149,26 @@ dist
 *.vscode/
 *.pth
 *.pt
-tests
+/tests/
 checkpoints
 runs
 cache
 *.out
 *.o
 *.zip
-data
+/data/
 figures/*.pdf
 
 rsync*
 results_hpc/
-models/*
-datasets/TartanAir.pickle
-datasets/TartanAir
+/models/
 TartanAirResults
-thirdparty/*
+/thirdparty/eigen-3.4.0/
 movies/
+
+# Données et poids téléchargés (scripts/download/)
+/datasets/
+/pretrained/
 TartanAirEVS.pickle
 results/
 results_coupled/
