@@ -1,3 +1,5 @@
+import os
+import struct
 import torch
 import numpy as np
 import torch.nn.functional as F
@@ -19,9 +21,10 @@ from utils.viz_utils import visualize_voxel
 
 
 class DEVO:
-    def __init__(self, cfg, network, evs=False, ht=480, wd=640, viz=False, viz_flow=False, dim_inet=384, dim_fnet=128, dim=32):
+    def __init__(self, cfg, network, evs=False, ht=480, wd=640, viz=False, viz_flow=False, dim_inet=384, dim_fnet=128, dim=32, map_path=None):
         self.cfg = cfg
         self.evs = evs
+        self.map_path = map_path
 
         self.dim_inet = dim_inet
         self.dim_fnet = dim_fnet
@@ -205,8 +208,47 @@ class DEVO:
         if self.viewer is not None:
             self.viewer.join()
 
+        if self.map_path is not None and self.is_initialized:
+            self._export_map()
+
         return poses, tstamps
     
+    def _export_map(self):
+        ix = torch.arange(self.n, device="cuda").repeat_interleave(self.M)
+        with torch.no_grad():
+            pts = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics, ix)
+        pts = (pts[..., 1, 1, :3] / pts[..., 1, 1, 3:]).reshape(-1, 3).cpu().numpy()
+        clrs = self.colors_[:self.n].reshape(-1, 3).cpu().numpy()
+
+        valid = np.isfinite(pts).all(axis=1) & (pts[:, 2] > 0.0)
+        pts, clrs = pts[valid], clrs[valid]
+
+        self._write_ply(self.map_path, pts, clrs)
+        print(f"[DEVO] Map saved -> {self.map_path} ({len(pts)} points)")
+
+    @staticmethod
+    def _write_ply(path, points, colors):
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        n = len(points)
+        header = (
+            "ply\n"
+            "format binary_little_endian 1.0\n"
+            f"element vertex {n}\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            "property uchar red\n"
+            "property uchar green\n"
+            "property uchar blue\n"
+            "end_header\n"
+        )
+        with open(path, "wb") as f:
+            f.write(header.encode("ascii"))
+            for i in range(n):
+                f.write(struct.pack("<fffBBB",
+                    float(points[i, 0]), float(points[i, 1]), float(points[i, 2]),
+                    int(colors[i, 0]), int(colors[i, 1]), int(colors[i, 2])))
+
     def corr(self, coords, indicies=None):
         """ local correlation volume """
         ii, jj = indicies if indicies is not None else (self.kk, self.jj)
@@ -379,8 +421,13 @@ class DEVO:
             torch.arange(t0, t1, device="cuda"),
             torch.arange(max(self.n-r, 0), self.n, device="cuda"), indexing='ij')
 
-    def __call__(self, tstamp, image, intrinsics, scale=1.0):
-        """ track new frame """
+    def __call__(self, tstamp, image, intrinsics, scale=1.0, dyn_score=None):
+        """ track new frame
+
+        dyn_score (optional): masque/score "dynamique" (h/4, w/4) [ou broadcastable] pour
+            cette frame, valeurs dans [0, 1] (1 = objet mobile). Transmis au patch selector
+            pour atténuer la score map (jalon 1 / M0). None => DEVO vanilla identique.
+        """
 
         if (self.n+1) >= self.N:
             raise Exception(f'The buffer size is too small. You can increase it using "--buffer {self.N*2}"')
@@ -475,10 +522,11 @@ class DEVO:
         with autocast(enabled=self.cfg.MIXED_PRECISION):
             fmap, gmap, imap, patches, _, clr = \
                 self.network.patchify(image,
-                    patches_per_image=self.cfg.PATCHES_PER_FRAME, 
+                    patches_per_image=self.cfg.PATCHES_PER_FRAME,
                     return_color=True,
                     scorer_eval_mode=self.cfg.SCORER_EVAL_MODE,
-                    scorer_eval_use_grid=self.cfg.SCORER_EVAL_USE_GRID)
+                    scorer_eval_use_grid=self.cfg.SCORER_EVAL_USE_GRID,
+                    dyn_score=dyn_score)
 
         self.patches_gt_[self.n] = patches.clone()
 

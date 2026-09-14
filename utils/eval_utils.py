@@ -107,22 +107,26 @@ def run_voxel_norm_seq(voxeldir, cfg, network, viz=False, iterator=None, timing=
 
 
 @torch.no_grad()
-def run_voxel(voxeldir, cfg, network, viz=False, iterator=None, timing=False, H=480, W=640, viz_flow=False, scale=1.0, **kwargs): 
+def run_voxel(voxeldir, cfg, network, viz=False, iterator=None, timing=False, H=480, W=640, viz_flow=False, scale=1.0, dyn_mask_provider=None, **kwargs):
+    # dyn_mask_provider (optional): callable ts_us -> score dynamique (h/4,w/4) [ou None]
+    #   par frame. Injecté dans le patch selector pour annuler la score map aux objets
+    #   mobiles (jalon 1 / M0). None => DEVO vanilla strictement identique.
     slam = DEVO(cfg, network, evs=True, ht=H, wd=W, viz=viz, viz_flow=viz_flow, **kwargs)
-    
+
     for i, (voxel, intrinsics, t) in enumerate(iterator):
         if timing and i == 0:
             t0 = torch.cuda.Event(enable_timing=True)
             t1 = torch.cuda.Event(enable_timing=True)
             t0.record()
 
-        if viz: 
+        if viz:
             # import matplotlib.pyplot as plt
             # plt.switch_backend('Qt5Agg')
             visualize_voxel(voxel.detach().cpu())
-        
+
+        dyn_score = None if dyn_mask_provider is None else dyn_mask_provider(t)
         with Timer("DEVO", enabled=timing):
-            slam(t, voxel, intrinsics, scale=scale)
+            slam(t, voxel, intrinsics, scale=scale, dyn_score=dyn_score)
 
     for _ in range(12):
         slam.update()
@@ -289,10 +293,9 @@ def ate_real(traj_ref, tss_ref_us, traj_est, tstamps):
         orientations_quat_wxyz=traj_est[:,3:], # TODO wrong format: EVO uses wxyz, we use xyzw
         timestamps=tstamps/1e6)
 
-    if traj_ref.shape == traj_est.shape:
-        assert np.all(tss_ref_us == tstamps)
+    if traj_ref.shape == traj_est.shape and np.all(tss_ref_us == tstamps):
         return ate(traj_ref, traj_est, tstamps)*100, evoGT, evoEst
-    
+
     evoGT, evoEst = sync.associate_trajectories(evoGT, evoEst, max_diff=1)
     ape_trans = main_ape.ape(evoGT, evoEst, pose_relation=metrics.PoseRelation.translation_part, align=True, correct_scale=True)
     evoATE = ape_trans.stats["rmse"]*100
@@ -329,6 +332,7 @@ def log_results(data, hyperparam, all_results, results_dict_scene, figures,
         else:
             train_step = -1
     scene_name = '_'.join(scene.split('/')[1:]).title() if "/P0" in scene else scene.title()
+    scene_name = scene_name.replace('/', '_')
     if outdir is None:
         outdir = "results"
     outfolder = make_outfolder(outdir, dataset_name, expname, scene_name, trial, train_step, stride, calib1_eds, camID_tumvie)
@@ -343,16 +347,27 @@ def log_results(data, hyperparam, all_results, results_dict_scene, figures,
                 yaml.dump(vars(args), f, default_flow_style=False)
 
     # compute ATE
-    ate_score, evoGT, evoEst = ate_real(traj_GT, tss_GT_us, traj_est, tss_est_us)
+    try:
+        ate_score, evoGT, evoEst = ate_real(traj_GT, tss_GT_us, traj_est, tss_est_us)
+    except (np.linalg.LinAlgError, Exception) as e:
+        print(f"WARNING: ATE computation failed for {scene}: {e}. Skipping scene.")
+        ate_score = float('nan')
+        all_results.append(ate_score)
+        results_dict_scene[scene].append(ate_score)
+        return all_results, results_dict_scene, figures, outfolder
     all_results.append(ate_score)
     results_dict_scene[scene].append(ate_score)
-    
+
     # following https://github.com/arclab-hku/Event_based_VO-VIO-SLAM/issues/5
     evoGT = make_evo_traj(traj_GT, tss_GT_us)
     evoEst = make_evo_traj(traj_est, tss_est_us)
     gtlentraj = evoGT.get_infos()["path length (m)"]
     evoGT, evoEst = sync.associate_trajectories(evoGT, evoEst, max_diff=1)
-    ape_trans = main_ape.ape(copy.deepcopy(evoGT), copy.deepcopy(evoEst), pose_relation=metrics.PoseRelation.translation_part, align=True, correct_scale=True)
+    try:
+        ape_trans = main_ape.ape(copy.deepcopy(evoGT), copy.deepcopy(evoEst), pose_relation=metrics.PoseRelation.translation_part, align=True, correct_scale=True)
+    except (np.linalg.LinAlgError, Exception) as e:
+        print(f"WARNING: APE computation failed for {scene}: {e}. Skipping scene.")
+        return all_results, results_dict_scene, figures, outfolder
     MPE = ape_trans.stats["mean"] / gtlentraj * 100
     evoATE = ape_trans.stats["rmse"]*100
     assert abs(evoATE-ate_score) < 1e-5

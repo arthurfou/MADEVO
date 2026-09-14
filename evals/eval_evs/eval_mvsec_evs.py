@@ -10,8 +10,9 @@ from utils.viz_utils import viz_flow_inference
 H, W = 260, 346
 
 @torch.no_grad()
-def evaluate(config, args, net, train_step=None, datapath="", split_file=None, 
-             trials=1, stride=1, plot=False, save=False, return_figure=False, viz=False, timing=False, side='left', viz_flow=False):
+def evaluate(config, args, net, train_step=None, datapath="", split_file=None,
+             trials=1, stride=1, plot=False, save=False, return_figure=False, viz=False, timing=False, side='left', viz_flow=False, map_path=None,
+             dyn_mask_provider_factory=None):
     dataset_name = "mvsec_evs"
     assert side == "left" or side == "right"
     assert stride == 1 # != does not work yet
@@ -32,10 +33,14 @@ def evaluate(config, args, net, train_step=None, datapath="", split_file=None,
             # estimated trajectory
             datapath_val = os.path.join(datapath, scene)
 
+            dyn_mask_provider = None if dyn_mask_provider_factory is None \
+                else dyn_mask_provider_factory(scene, datapath_val)
+
             # run the slam system
-            traj_est, tstamps, flowdata = run_voxel(datapath_val, config, net, viz=viz, 
+            traj_est, tstamps, flowdata = run_voxel(datapath_val, config, net, viz=viz,
                                           iterator=mvsec_evs_iterator(datapath_val, side=side, stride=stride, timing=timing, H=H, W=W),
-                                          timing=timing, H=H, W=W, viz_flow=viz_flow)
+                                          timing=timing, H=H, W=W, viz_flow=viz_flow, map_path=map_path,
+                                          dyn_mask_provider=dyn_mask_provider)
 
             # load traj
             tss_traj_us, traj_hf = load_mvsec_traj(datapath_val)
@@ -78,6 +83,7 @@ if __name__ == '__main__':
     parser.add_argument('--side', type=str, default="left")
     parser.add_argument('--viz_flow', action="store_true")
     parser.add_argument('--expname', type=str, default="")
+    parser.add_argument('--map_path', type=str, default=None, help="If set, export a PLY point cloud map to this path")
 
     args = parser.parse_args()
     assert_eval_config(args)
@@ -92,7 +98,7 @@ if __name__ == '__main__':
     args.plot = True
     val_results, val_figures = evaluate(cfg, args, args.weights, datapath=args.datapath, split_file=args.val_split, trials=args.trials, \
                        plot=args.plot, save=args.save_trajectory, return_figure=args.return_figs, viz=args.viz,timing=args.timing, \
-                        stride=args.stride, side=args.side, viz_flow=args.viz_flow)
+                        stride=args.stride, side=args.side, viz_flow=args.viz_flow, map_path=args.map_path)
     
     print("val_results= \n")
     for k in val_results:
