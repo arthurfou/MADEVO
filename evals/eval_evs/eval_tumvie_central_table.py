@@ -8,8 +8,8 @@ import argparse
 
 import torch
 from devo.config import cfg
-from utils.eval_utils import assert_eval_config
-from utils.ms_dataset_factory import make_ms_factory, _mean_ate
+from utils.eval_utils import assert_eval_config, mean_scene_ate
+from utils.ms_dataset_factory import make_ms_factory
 
 from eval_tumvie_evs import evaluate
 
@@ -18,7 +18,7 @@ def run_row(name, cfg, args, devo_weights, factory, common):
     print(f"\n=== [tumvie-table] {name} ===")
     args.expname = "central_" + name.replace(" ", "_").replace("(", "").replace(")", "")
     res, _ = evaluate(cfg, args, devo_weights, dyn_mask_provider_factory=factory, **common)
-    return _mean_ate(res), res
+    return mean_scene_ate(res), res
 
 
 def write_table(rows, outdir):

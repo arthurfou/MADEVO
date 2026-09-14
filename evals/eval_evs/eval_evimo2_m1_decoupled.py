@@ -14,7 +14,7 @@ import argparse
 import numpy as np
 import torch
 from devo.config import cfg
-from utils.eval_utils import assert_eval_config
+from utils.eval_utils import assert_eval_config, mean_scene_ate
 
 from eval_evimo2_evs import evaluate  # même dossier
 
@@ -101,16 +101,6 @@ def make_learned_factory(mask_root, ms_weights, ms_config, threshold=None, devic
     return factory
 
 
-def _mean_ate(results_dict):
-    vals = []
-    for v in results_dict.values():
-        try:
-            vals.append(float(v))
-        except (TypeError, ValueError):
-            continue
-    return sum(vals) / len(vals) if vals else float("nan")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default="config/eval_evimo.yaml")
@@ -158,7 +148,7 @@ if __name__ == "__main__":
 
     print("\n==================== [M1] RÉSUMÉ ATE ====================")
     order = [k for k in ("vanilla", "learned", "oracle") if k in res]
-    means = {k: _mean_ate(res[k]) for k in order}
+    means = {k: mean_scene_ate(res[k]) for k in order}
     for k in order:
         print(f"  {k:8s}: ATE moyen = {means[k]:.4f}")
     if "vanilla" in means and "learned" in means:

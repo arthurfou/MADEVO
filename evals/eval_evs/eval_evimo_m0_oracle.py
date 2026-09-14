@@ -26,7 +26,7 @@ import argparse
 
 import torch
 from devo.config import cfg
-from utils.eval_utils import assert_eval_config
+from utils.eval_utils import assert_eval_config, mean_scene_ate
 
 from eval_evimo_evs import evaluate  # même dossier
 
@@ -61,17 +61,6 @@ def make_oracle_factory(mask_root, patch_size=4, thicken_radius=0, device="cuda"
         return cache[npz]
 
     return factory
-
-
-def _mean_ate(results_dict):
-    """Extrait un ATE moyen lisible depuis le dict de résultats de log_results."""
-    vals = []
-    for k, v in results_dict.items():
-        try:
-            vals.append(float(v))
-        except (TypeError, ValueError):
-            continue
-    return sum(vals) / len(vals) if vals else float("nan")
 
 
 if __name__ == "__main__":
@@ -115,7 +104,7 @@ if __name__ == "__main__":
     for k, v in res.items():
         print(f"  {k:8s}: {v}")
     if "vanilla" in res and "oracle" in res:
-        a, b = _mean_ate(res["vanilla"]), _mean_ate(res["oracle"])
+        a, b = mean_scene_ate(res["vanilla"]), mean_scene_ate(res["oracle"])
         print(f"\n  ATE moyen vanilla = {a:.4f}")
         print(f"  ATE moyen oracle  = {b:.4f}")
         if a == a and b == b:  # not NaN

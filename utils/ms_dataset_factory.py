@@ -155,8 +155,3 @@ def make_ms_factory(
         return _make_provider(ea, frame_ts_s, ms_weights, ms_config, threshold, device)
 
     return factory
-
-
-def _mean_ate(results_dict: dict) -> float:
-    vals = [float(v) for v in results_dict.values() if v is not None]
-    return sum(vals) / len(vals) if vals else float("nan")

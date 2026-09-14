@@ -9,17 +9,17 @@ import argparse
 
 import torch
 from devo.config import cfg
-from utils.eval_utils import assert_eval_config
+from utils.eval_utils import assert_eval_config, mean_scene_ate
 
 from eval_evimo2_evs import evaluate
-from eval_evimo2_m1_decoupled import make_oracle_factory, make_learned_factory, _mean_ate
+from eval_evimo2_m1_decoupled import make_oracle_factory, make_learned_factory
 
 
 def run_row(name, cfg, args, devo_weights, factory, common):
     print(f"\n=== [table] {name} (DEVO={os.path.basename(devo_weights)}) ===")
     args.expname = "central_" + name.replace(" ", "_").replace("(", "").replace(")", "")
     res, _ = evaluate(cfg, args, devo_weights, dyn_mask_provider_factory=factory, **common)
-    return _mean_ate(res), res
+    return mean_scene_ate(res), res
 
 
 def write_table(rows, outdir):
