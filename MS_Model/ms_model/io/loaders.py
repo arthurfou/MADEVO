@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 from typing import Optional, Union
 
@@ -70,12 +71,32 @@ def _load_evimo2_mask(path: Path) -> "FrameMasks":
     return FrameMasks(masks=masks, ts=ts)
 
 
+def _npz_array_shape(path: Union[str, Path], key: str) -> Optional[tuple]:
+    """Forme du tableau `key` d'un `.npz`, lue dans l'en-tête sans décompresser les données."""
+    with zipfile.ZipFile(path) as zf:
+        name = f"{key}.npy"
+        if name not in zf.namelist():
+            return None
+        with zf.open(name) as f:
+            major, _ = np.lib.format.read_magic(f)
+            if major == 1:
+                shape, _, _ = np.lib.format.read_array_header_1_0(f)
+            elif major == 2:
+                shape, _, _ = np.lib.format.read_array_header_2_0(f)
+            else:
+                return None
+    return shape
+
+
 def load_evimo_npz(path: Union[str, Path]) -> "EventArray":
     """Charge un fichier EVIMO `*.npz`.
 
     Contient une clé "events" (N,4) float32 [t_sec, x, y, p] et une clé
     "index" donnant, pour chaque frame, l'indice du premier event qui lui
     correspond dans le tableau "events".
+
+    La résolution est lue dans le masque GT quand il est présent : un npz EVIMO2
+    converti (scripts/convert_evimo2_to_evimo1.py) est en 480×640, pas en DVS346.
     """
     data = np.load(path)
     events = data["events"].astype(np.float64)
@@ -85,7 +106,9 @@ def load_evimo_npz(path: Union[str, Path]) -> "EventArray":
         idx = np.clip(data["index"], 0, len(events) - 1)
         frame_ts = events[idx, 0]
 
-    return EventArray(events=events, H=EVIMO_H, W=EVIMO_W, frame_ts=frame_ts)
+    mask_shape = _npz_array_shape(path, "mask")
+    H, W = mask_shape[-2:] if mask_shape else (EVIMO_H, EVIMO_W)
+    return EventArray(events=events, H=H, W=W, frame_ts=frame_ts)
 
 
 def load_npy_canonical(
