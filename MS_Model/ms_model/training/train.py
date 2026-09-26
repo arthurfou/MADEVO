@@ -21,6 +21,9 @@ def build_dataset(paths: list[str], data_cfg: dict, root: Path) -> EvimoSegDatas
         nb_time_bins=data_cfg["nb_time_bins"],
         patch_size=data_cfg["patch_size"],
         mask_thicken_radius=data_cfg.get("mask_thicken_radius", 0),
+        mask_motion=data_cfg.get("mask_motion", "all"),
+        motion_thresh_m=data_cfg.get("motion_thresh_m", 0.02),
+        motion_window_s=data_cfg.get("motion_window_s", 0.2),
     )
 
 

@@ -172,7 +172,9 @@ def build_dataset(args):
         return EvimoClipDataset(
             npz_paths, n_frames=args.n_frames, nb_time_bins=args.nb_time_bins,
             patch_size=args.patch_size, depth_scale=args.depth_scale,
-            provide_gt_mask=args.provide_gt_mask, mask_thicken_radius=args.mask_thicken_radius)
+            provide_gt_mask=args.provide_gt_mask, mask_thicken_radius=args.mask_thicken_radius,
+            mask_motion=args.mask_motion, motion_thresh_m=args.motion_thresh_m,
+            motion_window_s=args.motion_window_s)
     return dataset_factory(['tartan_evs'], datapath=args.datapath, n_frames=args.n_frames,
                            fgraph_pickle=args.fgraph_pickle, train_split=args.train_split,
                            val_split=args.val_split, strict_split=False, sample=True,
@@ -313,6 +315,12 @@ if __name__ == "__main__":
     p.add_argument('--depth_scale', type=float, default=1000.0, help='depth EVIMO en mm -> m')
     p.add_argument('--provide_gt_mask', action='store_true', help='loss masque supervisée (M2 sup.)')
     p.add_argument('--mask_thicken_radius', type=int, default=3)
+    p.add_argument('--mask_motion', default="all", choices=["all", "sequence", "frame"],
+                   help="masque GT = tous les objets annotés (all) ou seulement ceux qui bougent")
+    p.add_argument('--motion_thresh_m', type=float, default=0.02,
+                   help="seuil de mouvement en mètres (modes sequence/frame)")
+    p.add_argument('--motion_window_s', type=float, default=0.2,
+                   help="fenêtre temporelle du mode frame, en secondes")
     p.add_argument('--mask_weight', type=float, default=1.0, help='poids loss masque (supervisée ou auto-sup.)')
     # M3 auto-supervisé (sans GT) : masque supervisé par le résidu de la DBA
     p.add_argument('--selfsup', action='store_true',

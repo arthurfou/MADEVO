@@ -116,6 +116,9 @@ class OracleDynMaskProvider(TimestampMaskProvider):
         device: Union[str, torch.device] = "cuda",
         max_dt_ms: float = 50.0,
         ts_offset_s: float = 0.0,
+        mask_motion: str = "all",
+        motion_thresh_m: float = 0.02,
+        motion_window_s: float = 0.2,
     ) -> "OracleDynMaskProvider":
         """Construit le provider depuis un npz EVIMO (clés `mask` + `meta`).
 
@@ -123,7 +126,10 @@ class OracleDynMaskProvider(TimestampMaskProvider):
         sous-échantillonnage — un patch en bordure d'objet reste pollué.
         ts_offset_s: offset à soustraire lors du lookup (voir TimestampMaskProvider).
         """
+        from ms_model.motion import filter_masks_to_moving
+
         fm = load_evimo_mask(npz_path)
+        fm = filter_masks_to_moving(fm, npz_path, mask_motion, motion_thresh_m, motion_window_s)
         if thicken_radius > 0:
             fm = thicken_mask(fm, radius=thicken_radius)
         return cls(fm, patch_size=patch_size, device=device, max_dt_ms=max_dt_ms,

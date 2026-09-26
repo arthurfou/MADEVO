@@ -37,6 +37,7 @@ from torch.utils.data import Dataset
 from ms_model.io.masks import FrameMasks
 from ms_model.masking import thicken_mask
 from ms_model.data.evimo_dataset import downsample_mask, ensure_voxel_cache
+from ms_model.motion import (DEFAULT_THRESH_M, DEFAULT_WINDOW_S, filter_masks_to_moving)
 
 
 def evimo_cam_to_pose7(frame: dict) -> np.ndarray:
@@ -91,9 +92,14 @@ def _load_depth_and_mask(npz_path: Path, N: int, want_mask: bool):
 
 
 def _prepare_gt_dyn(mask_arr: np.ndarray, ts_frames: np.ndarray,
-                    patch_size: int, mask_thicken_radius: int) -> torch.Tensor:
+                    patch_size: int, mask_thicken_radius: int,
+                    seq_path: Optional[Path] = None, mask_motion: str = "all",
+                    motion_thresh_m: float = DEFAULT_THRESH_M,
+                    motion_window_s: float = DEFAULT_WINDOW_S) -> torch.Tensor:
     """Convertit un array (N, H, W) de segmentation en score dynamique (N, Hp, Wp) sous-échantillonné."""
     fm = FrameMasks(masks=mask_arr, ts=ts_frames)
+    if mask_motion != "all":
+        fm = filter_masks_to_moving(fm, seq_path, mask_motion, motion_thresh_m, motion_window_s)
     if mask_thicken_radius > 0:
         fm = thicken_mask(fm, radius=mask_thicken_radius)
     return torch.stack([downsample_mask(fm.masks[i], patch_size) for i in range(len(fm.masks))])
@@ -121,6 +127,9 @@ class EvimoClipDataset(Dataset):
         depth_scale: float = 1000.0,
         provide_gt_mask: bool = False,
         mask_thicken_radius: int = 0,
+        mask_motion: str = "all",
+        motion_thresh_m: float = DEFAULT_THRESH_M,
+        motion_window_s: float = DEFAULT_WINDOW_S,
         stride_clips: int = 1,
         min_depth: float = 1.0,
         cache_size: int = 2,
@@ -131,6 +140,9 @@ class EvimoClipDataset(Dataset):
         self.patch_size = patch_size
         self.depth_scale = depth_scale
         self.mask_thicken_radius = mask_thicken_radius
+        self.mask_motion = mask_motion
+        self.motion_thresh_m = motion_thresh_m
+        self.motion_window_s = motion_window_s
         self.min_depth = min_depth
         self.cache_size = max(1, int(cache_size))
 
@@ -187,7 +199,9 @@ class EvimoClipDataset(Dataset):
         heavy = {"disps": torch.from_numpy(disps)}  # (N, H, W)
         if self.provide_gt_mask:
             heavy["gt_dyn"] = _prepare_gt_dyn(
-                mask, self.frame_ts_all[si], self.patch_size, self.mask_thicken_radius)
+                mask, self.frame_ts_all[si], self.patch_size, self.mask_thicken_radius,
+                seq_path=self.paths[si], mask_motion=self.mask_motion,
+                motion_thresh_m=self.motion_thresh_m, motion_window_s=self.motion_window_s)
         self._cache[si] = heavy
         while len(self._cache) > self.cache_size:
             self._cache.popitem(last=False)

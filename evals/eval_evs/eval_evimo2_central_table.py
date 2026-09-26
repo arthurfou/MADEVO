@@ -59,6 +59,10 @@ if __name__ == "__main__":
     p.add_argument('--ms_coupled_sup', default=None, help='M2 checkpoint')
     p.add_argument('--ms_coupled_selfsup', default=None, help='M3 checkpoint')
     p.add_argument('--threshold', type=float, default=None)
+    p.add_argument('--mask_motion', default="all", choices=["all", "sequence", "frame"],
+                   help="masque oracle = tous les objets annotés (all) ou seulement ceux qui bougent")
+    p.add_argument('--motion_thresh_m', type=float, default=0.02)
+    p.add_argument('--motion_window_s', type=float, default=0.2)
     p.add_argument('--thicken_radius', type=int, default=2)
     p.add_argument('--trials', type=int, default=1)
     p.add_argument('--stride', type=int, default=1)
@@ -86,7 +90,10 @@ if __name__ == "__main__":
                  run_row("DEVO vanilla", cfg, args, args.weights, None, common)[0]))
     rows.append(("DEVO + oracle GT",
                  run_row("DEVO + oracle GT", cfg, args, args.weights,
-                         make_oracle_factory(args.mask_root, thicken_radius=args.thicken_radius), common)[0]))
+                         make_oracle_factory(
+                             args.mask_root, thicken_radius=args.thicken_radius,
+                             mask_motion=args.mask_motion, motion_thresh_m=args.motion_thresh_m,
+                             motion_window_s=args.motion_window_s), common)[0]))
     if args.ms_decoupled:
         rows.append(("DEVO + appris découplé (M1)",
                      run_row("DEVO + appris découplé (M1)", cfg, args, args.weights,

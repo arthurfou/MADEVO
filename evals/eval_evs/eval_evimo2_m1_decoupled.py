@@ -69,7 +69,8 @@ def _ts_offset(datapath_val, npz_path):
     return offset
 
 
-def make_oracle_factory(mask_root, patch_size=4, thicken_radius=0, device="cuda"):
+def make_oracle_factory(mask_root, patch_size=4, thicken_radius=0, device="cuda",
+                        mask_motion="all", motion_thresh_m=0.02, motion_window_s=0.2):
     from ms_model.oracle import OracleDynMaskProvider
 
     def factory(scene, datapath_val):
@@ -80,7 +81,8 @@ def make_oracle_factory(mask_root, patch_size=4, thicken_radius=0, device="cuda"
         print(f"[M1] Oracle masks <- {npz}")
         return OracleDynMaskProvider.from_evimo_npz(
             npz, patch_size=patch_size, thicken_radius=thicken_radius,
-            device=device, ts_offset_s=offset)
+            device=device, ts_offset_s=offset, mask_motion=mask_motion,
+            motion_thresh_m=motion_thresh_m, motion_window_s=motion_window_s)
 
     return factory
 
@@ -111,6 +113,10 @@ if __name__ == "__main__":
     parser.add_argument('--ms_weights', type=str, required=True, help='checkpoint modèle MS (best.pt)')
     parser.add_argument('--ms_config', type=str, required=True, help='yaml entraînement MS')
     parser.add_argument('--threshold', type=float, default=None)
+    parser.add_argument('--mask_motion', default="all", choices=["all", "sequence", "frame"],
+                        help="masque oracle = tous les objets annotés (all) ou seulement ceux qui bougent")
+    parser.add_argument('--motion_thresh_m', type=float, default=0.02)
+    parser.add_argument('--motion_window_s', type=float, default=0.2)
     parser.add_argument('--thicken_radius', type=int, default=2)
     parser.add_argument('--with_oracle', action="store_true")
     parser.add_argument('--no_vanilla', action="store_true")
@@ -143,7 +149,9 @@ if __name__ == "__main__":
     if args.with_oracle:
         print("\n=== [M1] Passe ORACLE (plafond) ===")
         args.expname = "m1_evimo2_oracle"
-        oracle = make_oracle_factory(args.mask_root, thicken_radius=args.thicken_radius)
+        oracle = make_oracle_factory(
+            args.mask_root, thicken_radius=args.thicken_radius, mask_motion=args.mask_motion,
+            motion_thresh_m=args.motion_thresh_m, motion_window_s=args.motion_window_s)
         res["oracle"], _ = evaluate(cfg, args, args.weights, dyn_mask_provider_factory=oracle, **common)
 
     print("\n==================== [M1] RÉSUMÉ ATE ====================")

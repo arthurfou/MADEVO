@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 
 from ms_model.io.loaders import load_events, load_evimo_mask
 from ms_model.masking import thicken_mask
+from ms_model.motion import (DEFAULT_THRESH_M, DEFAULT_WINDOW_S, filter_masks_to_moving)
 from ms_model.representations.voxel import make_voxel_sequence
 
 
@@ -75,6 +76,9 @@ class EvimoSegDataset(Dataset):
         nb_time_bins: int = 5,
         patch_size: int = 4,
         mask_thicken_radius: int = 0,
+        mask_motion: str = "all",
+        motion_thresh_m: float = DEFAULT_THRESH_M,
+        motion_window_s: float = DEFAULT_WINDOW_S,
     ):
         self.seq_len = seq_len
         # (cache_path, mask_tensor) — voxels restent sur disque
@@ -86,6 +90,7 @@ class EvimoSegDataset(Dataset):
             print(f"[EvimoSegDataset] ({i + 1}/{len(npz_paths)}) chargement {path} ...", flush=True)
 
             fm = load_evimo_mask(path)
+            fm = filter_masks_to_moving(fm, path, mask_motion, motion_thresh_m, motion_window_s)
             if mask_thicken_radius > 0:
                 fm = thicken_mask(fm, radius=mask_thicken_radius)
 
