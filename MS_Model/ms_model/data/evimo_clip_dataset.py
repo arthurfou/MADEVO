@@ -11,7 +11,7 @@ Format attendu par le forward d'entraînement de DEVO (cf. train.py) :
     intrinsics : (4,) = [fx, fy, cx, cy]
 
 Chargement **paresseux** (lazy) :
-- Les voxels sont lus par mmap depuis le cache disque `<npz>.voxels_bins{N}.npy` (construit au
+- Les voxels sont lus par mmap depuis le cache disque `<npz>.voxels_bins{N}.v{V}.npy` (construit au
   premier accès par `ensure_voxel_cache`, ou à l'avance par `scripts/preprocess_voxels.py`)
   → slice de clip = quelques MB de disque, pas de voxelisation par clip.
 - depth / mask GT (compressés dans le npz, ~2 GB décompressés chacun) sont chargés à la demande

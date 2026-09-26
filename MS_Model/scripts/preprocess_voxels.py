@@ -1,6 +1,6 @@
 """Prétraitement offline des voxel grids EVIMO.
 
-Calcule et sauvegarde les voxel grids (`<séquence>.voxels_bins<N>.npy`) à côté de chaque
+Calcule et sauvegarde les voxel grids (`<séquence>.voxels_bins<N>.v<V>.npy`) à côté de chaque
 séquence, sans lancer d'entraînement. Facultatif : EvimoSegDataset et EvimoClipDataset
 construisent le cache à la volée s'il manque ; ce script permet de le faire une seule fois
 sur un nœud CPU avant de soumettre les jobs GPU.
@@ -10,7 +10,8 @@ Séquences reconnues sous --data-root :
 - EVIMO1 : fichiers `*.npz` (hors fichiers `dataset_*.npz` des répertoires EVIMO2).
 
 Le format .npy permet un chargement lazy via numpy memmap (pas d'OOM même sur
-de grands datasets). Les anciens caches .pt sont migrés automatiquement.
+de grands datasets). Les caches v1 (antérieurs à 09/2026, timestamps désalignés) ne sont
+jamais relus : ils portent un autre nom et peuvent être supprimés.
 
 Usage :
     python scripts/preprocess_voxels.py --data-root ../datasets/evimo2/samsung_mono/imo/train
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ms_model.data.evimo_dataset import ensure_voxel_cache
+from ms_model.data.evimo_dataset import ensure_voxel_cache, voxel_cache_path
 
 
 def find_sequences(root: Path) -> list[Path]:
@@ -43,7 +44,7 @@ def preprocess(data_root: str, nb_time_bins: int, force: bool) -> None:
     print(f"{len(sequences)} séquences trouvées dans {root}\n")
 
     for i, seq in enumerate(sequences, 1):
-        cache_path = seq.with_suffix(f".voxels_bins{nb_time_bins}.npy")
+        cache_path = voxel_cache_path(seq, nb_time_bins)
         if cache_path.exists() and not force:
             print(f"[{i}/{len(sequences)}] {seq.name} — cache déjà présent, ignoré")
             continue

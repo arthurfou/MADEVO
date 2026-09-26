@@ -20,32 +20,38 @@ def downsample_mask(mask: np.ndarray, patch_size: int) -> torch.Tensor:
     return out[0, 0]
 
 
+# Version du format de cache. v1 (`.voxels_bins<N>.npy` / `.pt`, avant 09/2026) a été
+# construite avec des timestamps de frames désalignés sur les frames possédant une GT : ces
+# caches sont inutilisables et ne doivent jamais être relus.
+VOXEL_CACHE_VERSION = 2
+
+
+def voxel_cache_path(path: Union[str, Path], nb_time_bins: int) -> Path:
+    """Chemin du cache de voxel grids d'une séquence EVIMO (fichier ou répertoire)."""
+    return Path(path).with_suffix(f".voxels_bins{nb_time_bins}.v{VOXEL_CACHE_VERSION}.npy")
+
+
 def ensure_voxel_cache(
     path: Union[str, Path],
     nb_time_bins: int,
     frame_ts: np.ndarray | None = None,
     overwrite: bool = False,
 ) -> Path:
-    """Chemin du cache disque `<séquence>.voxels_bins<N>.npy`, construit s'il manque.
+    """Chemin du cache disque des voxel grids d'une séquence, construit s'il manque.
 
     Le cache contient une voxel grid par intervalle entre deux frames GT ; il est lu en
-    memmap par EvimoSegDataset et EvimoClipDataset. Un ancien cache .pt est migré.
-    L'écriture passe par un fichier temporaire pour ne jamais laisser de cache tronqué.
+    memmap par EvimoSegDataset et EvimoClipDataset. L'écriture passe par un fichier
+    temporaire pour ne jamais laisser de cache tronqué.
     """
     path = Path(path)
-    cache_path = path.with_suffix(f".voxels_bins{nb_time_bins}.npy")
+    cache_path = voxel_cache_path(path, nb_time_bins)
     if cache_path.exists() and not overwrite:
         return cache_path
 
-    old_cache = path.with_suffix(f".voxels_bins{nb_time_bins}.pt")
-    if old_cache.exists() and not overwrite:
-        print(f"[voxel cache] migration .pt → .npy : {old_cache}", flush=True)
-        voxel_seq = torch.load(old_cache)
-    else:
-        print(f"[voxel cache] construction : {cache_path}", flush=True)
-        if frame_ts is None:
-            frame_ts = load_evimo_mask(path).ts
-        voxel_seq = make_voxel_sequence(load_events(path), frame_ts, nb_of_time_bins=nb_time_bins)
+    print(f"[voxel cache] construction : {cache_path}", flush=True)
+    if frame_ts is None:
+        frame_ts = load_evimo_mask(path).ts
+    voxel_seq = make_voxel_sequence(load_events(path), frame_ts, nb_of_time_bins=nb_time_bins)
 
     tmp_path = cache_path.with_name(cache_path.name + ".tmp")
     with open(tmp_path, "wb") as f:
@@ -57,7 +63,7 @@ def ensure_voxel_cache(
 class EvimoSegDataset(Dataset):
     """Séquences (voxel grids, masques dynamiques par patch) pour la motion segmentation.
 
-    Les voxel grids sont mis en cache sur disque (.voxels_bins<N>.npy) et lus
+    Les voxel grids sont mis en cache sur disque (voir voxel_cache_path) et lus
     via numpy memmap : seules les slices accédées sont chargées en RAM, ce qui
     permet d'entraîner sur de grands datasets sans OOM.
     """
