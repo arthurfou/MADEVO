@@ -61,6 +61,7 @@ training:
   use_scheduler: true
   loss: bce_dice
   loss_pos_weight: 10.0
+  images_every: 1      # voxels / masque prédit / masque GT sur wandb tous les N epochs
   num_workers: 4
 
 wandb:

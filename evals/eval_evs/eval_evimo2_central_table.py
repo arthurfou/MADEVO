@@ -10,9 +10,43 @@ import argparse
 import torch
 from devo.config import cfg
 from utils.eval_utils import assert_eval_config, mean_scene_ate
+from utils.wandb_logger import RunLogger
 
 from eval_evimo2_evs import evaluate
 from eval_evimo2_m1_decoupled import make_oracle_factory, make_learned_factory
+
+
+def log_to_wandb(args, rows, per_scene):
+    """Envoie la table (et les ATE par scène) comme `wandb.Table`."""
+    logger = RunLogger("eval", vars(args), exp=args.exp, seed=args.seed,
+                       run_dir=args.run_dir or None,
+                       launch_id=os.environ.get("LAUNCH_ID"))
+    base = next((a for n, a in rows if n == "DEVO vanilla" and a is not None), None)
+
+    table_rows = []
+    summary = {}
+    for name, ate in rows:
+        delta = None if (ate is None or not base) else 100.0 * (base - ate) / base
+        table_rows.append([name, ate, delta])
+        if ate is not None:
+            summary[f"eval/ate/{_slug(name)}"] = ate
+            if delta is not None:
+                summary[f"eval/delta_pct/{_slug(name)}"] = delta
+    logger.log_table("eval/table", ["configuration", "ate_mean", "delta_pct_vs_vanilla"],
+                     table_rows)
+
+    scenes = sorted({s for res in per_scene.values() for s in res if s not in ("AUC", "AVG")})
+    logger.log_table(
+        "eval/ate_par_scene", ["scene"] + list(per_scene),
+        [[scene] + [per_scene[m].get(scene) for m in per_scene] for scene in scenes])
+
+    logger.summary(summary)
+    logger.finish()
+
+
+def _slug(name):
+    return (name.replace("DEVO + ", "").replace("DEVO ", "")
+                .replace(" ", "_").replace("(", "").replace(")", "").lower())
 
 
 def run_row(name, cfg, args, devo_weights, factory, common):
@@ -69,6 +103,10 @@ if __name__ == "__main__":
     p.add_argument('--outdir', default="results/central_table_evimo2")
     p.add_argument('--expname', default="central_evimo2")
     p.add_argument('--seed', type=int, default=1234)
+    p.add_argument('--exp', default='eval_evimo2',
+                   help="nom d'expérience pour wandb (group)")
+    p.add_argument('--run-dir', dest='run_dir', default=None,
+                   help='dossier du run, où écrire wandb.txt (posé par jobs/eval_table.sh)')
     args = p.parse_args()
     assert_eval_config(args)
 
@@ -86,32 +124,31 @@ if __name__ == "__main__":
         return make_learned_factory(args.mask_root, ms_weights, args.ms_config, threshold=args.threshold)
 
     rows = []
-    rows.append(("DEVO vanilla",
-                 run_row("DEVO vanilla", cfg, args, args.weights, None, common)[0]))
-    rows.append(("DEVO + oracle GT",
-                 run_row("DEVO + oracle GT", cfg, args, args.weights,
-                         make_oracle_factory(
-                             args.mask_root, thicken_radius=args.thicken_radius,
-                             mask_motion=args.mask_motion, motion_thresh_m=args.motion_thresh_m,
-                             motion_window_s=args.motion_window_s), common)[0]))
+    per_scene = {}
+
+    def add(name, devo_weights, factory):
+        ate, res = run_row(name, cfg, args, devo_weights, factory, common)
+        rows.append((name, ate))
+        per_scene[name] = res
+        return ate
+
+    add("DEVO vanilla", args.weights, None)
+    add("DEVO + oracle GT", args.weights,
+        make_oracle_factory(args.mask_root, thicken_radius=args.thicken_radius,
+                            mask_motion=args.mask_motion, motion_thresh_m=args.motion_thresh_m,
+                            motion_window_s=args.motion_window_s))
     if args.ms_decoupled:
-        rows.append(("DEVO + appris découplé (M1)",
-                     run_row("DEVO + appris découplé (M1)", cfg, args, args.weights,
-                             learned(args.ms_decoupled), common)[0]))
+        add("DEVO + appris découplé (M1)", args.weights, learned(args.ms_decoupled))
     else:
         rows.append(("DEVO + appris découplé (M1)", None))
     if args.ms_coupled_sup:
-        rows.append(("DEVO + couplé supervisé (M2)",
-                     run_row("DEVO + couplé supervisé (M2)", cfg, args,
-                             args.devo_coupled_sup or args.weights,
-                             learned(args.ms_coupled_sup), common)[0]))
+        add("DEVO + couplé supervisé (M2)", args.devo_coupled_sup or args.weights,
+            learned(args.ms_coupled_sup))
     else:
         rows.append(("DEVO + couplé supervisé (M2)", None))
     if args.ms_coupled_selfsup:
-        rows.append(("DEVO + couplé auto-sup (M3)",
-                     run_row("DEVO + couplé auto-sup (M3)", cfg, args,
-                             args.devo_coupled_selfsup or args.weights,
-                             learned(args.ms_coupled_selfsup), common)[0]))
+        add("DEVO + couplé auto-sup (M3)", args.devo_coupled_selfsup or args.weights,
+            learned(args.ms_coupled_selfsup))
     else:
         rows.append(("DEVO + couplé auto-sup (M3)", None))
 
@@ -119,3 +156,4 @@ if __name__ == "__main__":
     for name, ate in rows:
         print(f"  {name:32s}: {'—' if ate is None else f'{ate:.4f}'}")
     write_table(rows, args.outdir)
+    log_to_wandb(args, rows, per_scene)

@@ -34,4 +34,5 @@ train:
   save_every: 2000
 
 log:
-  every: 20
+  every: 20            # métriques wandb tous les N steps
+  images_every: 500    # voxels / masques / patches tous les N steps (0 = jamais)

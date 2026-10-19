@@ -1,16 +1,21 @@
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Union
 
 import torch
-import wandb
 import yaml
 from torch.utils.data import DataLoader
 
 from ms_model.data.evimo_dataset import EvimoSegDataset
 from ms_model.models import build_model
 from ms_model.training.losses import build_loss
+
+# Monorepo : `utils` est installé avec `ms_model` (cf. setup.py), mais on tolère un
+# ms_model utilisé seul.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from utils.wandb_logger import RunLogger, mask_image, voxel_image  # noqa: E402
 
 
 def build_dataset(paths: list[str], data_cfg: dict, root: Path) -> EvimoSegDataset:
@@ -26,11 +31,12 @@ def build_dataset(paths: list[str], data_cfg: dict, root: Path) -> EvimoSegDatas
     )
 
 
-def run_epoch(model, loader, loss_fn, device, optimizer=None) -> dict:
+def run_epoch(model, loader, loss_fn, device, optimizer=None, keep_sample=False) -> dict:
     train_mode = optimizer is not None
     model.train(train_mode)
 
-    total_loss, total_iou, n_batches = 0.0, 0.0, 0
+    total_loss, total_iou, total_pos, n_batches = 0.0, 0.0, 0.0, 0
+    sample = None
     for voxel_seq, mask_seq in loader:
         voxel_seq = voxel_seq.to(device)
         mask_seq = mask_seq.to(device).unsqueeze(2)  # (B,T,1,Hp,Wp)
@@ -51,10 +57,21 @@ def run_epoch(model, loader, loss_fn, device, optimizer=None) -> dict:
             union        = (pred + gt).clamp(max=1).sum()
             total_iou   += (intersection / union.clamp(min=1)).item()
 
+            total_pos += gt.mean().item()
+            if keep_sample and sample is None:
+                # premier élément du premier lot : voxels, masque prédit, masque GT
+                sample = {
+                    "voxel": voxel_seq[0, 0].detach().cpu(),
+                    "pred": torch.sigmoid(logits[0, 0, 0]).detach().cpu(),
+                    "gt": mask_seq[0, 0, 0].detach().cpu(),
+                }
+
         total_loss += loss.item()
         n_batches  += 1
 
-    return {"loss": total_loss / n_batches, "iou": total_iou / n_batches}
+    metrics = {"loss": total_loss / n_batches, "iou": total_iou / n_batches,
+               "pos_frac": total_pos / n_batches}
+    return (metrics, sample) if keep_sample else metrics
 
 
 def load_resume_checkpoint(checkpoint_dir: Path) -> Union[dict, None]:
@@ -183,47 +200,53 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
         best_val_iou = resume_ckpt.get("best_val_iou", 0.0)
         wandb_run_id = resume_ckpt.get("wandb_run_id")
 
-    run = wandb.init(
-        project=wandb_cfg["project"],
-        entity=wandb_cfg.get("entity"),
-        name=fixed_name,
-        id=wandb_run_id,
-        resume="must" if wandb_run_id else None,
-        config=config,
+    logger = RunLogger(
+        "train_ms", config,
+        exp=config.get("exp", Path(config_path).stem), seed=seed, run_dir=run_dir,
+        launch_id=os.environ.get("LAUNCH_ID"),
+        project=wandb_cfg.get("project"), entity=wandb_cfg.get("entity"),
+        resume_id=wandb_run_id,
+        images_every=int(train_cfg.get("images_every", 1)),
     )
 
     if not run_dir:
         # Sans --run-dir on garde le comportement historique (dossier = nom du run wandb).
-        checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints")) / run.name
+        checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints")) / (
+            getattr(logger.run, "name", None) or fixed_name or "run")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    if run_dir:
-        # `url` n'existe pas en mode offline selon la version de wandb : on n'échoue pas
-        # pour si peu, l'id suffit à retrouver le run après un `wandb sync`.
-        try:
-            url = run.url or "(hors ligne)"
-        except Exception:
-            url = "(hors ligne)"
-        (Path(run_dir) / "wandb.txt").write_text(
-            f"id: {run.id}\nname: {run.name}\nmode: {os.environ.get('WANDB_MODE', 'online')}\n"
-            f"url: {url}\n")
 
     if start_epoch >= train_cfg["epochs"]:
         print(f"[resume] entrainement deja termine ({start_epoch}/{train_cfg['epochs']} epochs), rien a faire.")
-        wandb.finish()
+        logger.finish()
         return
 
     for epoch in range(start_epoch, train_cfg["epochs"]):
+        want_images = logger.should_log_images(epoch)
         train_metrics = run_epoch(model, train_loader, loss_fn, device, optimizer)
-        val_metrics   = run_epoch(model, val_loader, loss_fn, device)
+        val_out = run_epoch(model, val_loader, loss_fn, device, keep_sample=want_images)
+        val_metrics, val_sample = val_out if want_images else (val_out, None)
 
-        wandb.log({
-            "epoch":      epoch,
-            "train/loss": train_metrics["loss"],
-            "train/iou":  train_metrics["iou"],
-            "val/loss":   val_metrics["loss"],
-            "val/iou":    val_metrics["iou"],
-        })
+        logger.log({
+            "epoch":           epoch,
+            "ms/train/loss":   train_metrics["loss"],
+            "ms/train/iou":    train_metrics["iou"],
+            "ms/train/pos_frac": train_metrics["pos_frac"],
+            "ms/val/loss":     val_metrics["loss"],
+            "ms/val/iou":      val_metrics["iou"],
+            "ms/val/pos_frac": val_metrics["pos_frac"],
+            "ms/lr":           optimizer.param_groups[0]["lr"],
+        }, step=epoch)
+
+        if val_sample is not None:
+            # Voxels, masque prédit et masque GT côte à côte : c'est ce qui permet de voir
+            # que le MS segmente bien le mouvement et pas juste les objets annotés (T7).
+            logger.log_images({
+                "voxels":      voxel_image(val_sample["voxel"]),
+                "masque_pred": mask_image(val_sample["pred"]),
+                "masque_gt":   mask_image(val_sample["gt"]),
+            }, step=epoch, prefix="ms/val/")
+            logger.log_histogram("ms/val/score_hist", val_sample["pred"], step=epoch)
+
         print(f"epoch {epoch}: train_loss={train_metrics['loss']:.4f} train_iou={train_metrics['iou']:.4f} "
               f"val_loss={val_metrics['loss']:.4f} val_iou={val_metrics['iou']:.4f}", flush=True)
 
@@ -250,11 +273,11 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
             "epoch": epoch,
             "best_val_loss": best_val_loss,
             "best_val_iou": best_val_iou,
-            "wandb_run_id": run.id,
+            "wandb_run_id": logger.id,
             "config": config,
         }, checkpoint_dir / "last.pt")
 
-    wandb.finish()
+    logger.finish()
 
 
 if __name__ == "__main__":

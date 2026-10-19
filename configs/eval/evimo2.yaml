@@ -3,6 +3,8 @@
 #
 # ⚠️ Le script d'éval actuel calcule toujours vanilla et oracle ; `methods` ne pilote pour
 # l'instant que M1, M2 et M3. L'éval unifiée de T6 honorera la liste complète.
+exp: eval_evimo2        # group wandb : une expérience, toutes seeds confondues
+
 dataset:
   name: evimo2
   root: datasets/evimo2/eval_preprocessed      # --datapath (format DEVO)

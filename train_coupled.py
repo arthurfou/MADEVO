@@ -28,6 +28,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from devo.data_readers.factory import dataset_factory
+from utils.wandb_logger import RunLogger, mask_image, patches_image, voxel_image
 from devo.lietorch import SE3
 from devo.enet import eVONet, _sample_patch_scores
 from devo.selector import SelectionMethod
@@ -159,6 +160,85 @@ def save_coupled(outdir, net, ms, optimizer, steps, tag):
     print(f"[save] {outdir}/(devo|ms|coupled)_{tag} @ step {steps}")
 
 
+def _patch_scores(dyn_mask, patches, ix):
+    """Score dynamique par patch sélectionné, détaché — None si indisponible."""
+    if patches is None or ix is None:
+        return None
+    with torch.no_grad():
+        return _sample_patch_scores(dyn_mask, patches, ix).view(-1).detach()
+
+
+def log_coupled_step(logger, step, *, loss, pose_l, flow_l, mask_l, soft_prior,
+                     dyn_mask, gt_dyn, unfrozen, dyn_patch_scores, selfsup_stats):
+    """Métriques d'un pas couplé, préfixées par domaine.
+
+    `ba/omega_*` : ω est le poids que la BA applique à une arête, soit (1 - score
+    dynamique). On le sépare en « statique » et « dynamique » selon le GT quand il existe
+    (M2) et selon le seuil 0,5 sinon : c'est la mesure qui dit si le masque écarte vraiment
+    les patches sur objets mobiles, et non s'il baisse tout le monde uniformément.
+    """
+    metrics = {
+        "devo/loss":        float(loss),
+        "devo/pose_loss":   float(pose_l),
+        "devo/flow_loss":   float(flow_l),
+        "devo/mask_loss":   float(mask_l),
+        "devo/soft_prior":  float(soft_prior),
+        "coupling/mask_mean": float(dyn_mask.mean()),
+        "coupling/mask_std":  float(dyn_mask.std()),
+        "coupling/devo_unfrozen": int(unfrozen),
+    }
+    for key, value in selfsup_stats.items():
+        metrics[f"coupling/selfsup_{key}"] = value
+
+    if dyn_patch_scores is not None and dyn_patch_scores.numel():
+        scores = dyn_patch_scores
+        omega = (1.0 - scores).clamp(0.0, 1.0)
+        rejected = scores > 0.5
+        metrics["coupling/patches_rejected_frac"] = float(rejected.float().mean())
+        metrics["coupling/patches_total"] = int(scores.numel())
+        metrics["ba/omega_mean"] = float(omega.mean())
+        metrics["ba/omega_min"] = float(omega.min())
+
+        is_dynamic = rejected
+        if gt_dyn is not None:
+            # Avec le GT on sépare sur la vérité plutôt que sur la prédiction.
+            with torch.no_grad():
+                gt = gt_dyn
+                if gt.shape[-2:] != dyn_mask.shape[-2:]:
+                    gt = F.interpolate(gt, size=dyn_mask.shape[-2:], mode="nearest")
+                metrics["coupling/gt_pos_frac"] = float((gt > 0.5).float().mean())
+                pred_bin = (dyn_mask > 0.5).float()
+                gt_bin = (gt > 0.5).float()
+                inter = (pred_bin * gt_bin).sum()
+                union = (pred_bin + gt_bin).clamp(max=1).sum()
+                metrics["coupling/iou_vs_gt"] = float(inter / union.clamp(min=1))
+        if is_dynamic.any():
+            metrics["ba/omega_mean_dynamic"] = float(omega[is_dynamic].mean())
+        if (~is_dynamic).any():
+            metrics["ba/omega_mean_static"] = float(omega[~is_dynamic].mean())
+
+    logger.log(metrics, step=step)
+    if dyn_patch_scores is not None and dyn_patch_scores.numel():
+        logger.log_histogram("ba/omega_hist", 1.0 - dyn_patch_scores, step=step)
+    logger.log_histogram("coupling/mask_hist", dyn_mask, step=step)
+
+
+def log_coupled_images(logger, step, images, dyn_mask, gt_dyn, dyn_patch_scores, patches):
+    """Voxels, masque prédit, masque GT et patches sélectionnés, à la même étape."""
+    frame = 0
+    panels = {
+        "voxels":      voxel_image(images[0, frame]),
+        "masque_pred": mask_image(dyn_mask[0, frame]),
+    }
+    if gt_dyn is not None:
+        panels["masque_gt"] = mask_image(gt_dyn[0, frame])
+    if patches is not None and dyn_patch_scores is not None:
+        p = patches.shape[-1]
+        xy = patches[0, :, :2, p // 2, p // 2].detach().cpu()        # (K, 2) en unités Hp/Wp
+        panels["patches"] = patches_image(dyn_mask[0, frame], xy, dyn_patch_scores, radius=1)
+    logger.log_images(panels, step=step, prefix="coupling/")
+
+
 def build_dataset(args):
     """Construit le dataset d'entraînement (tartan_evs statique, ou EVIMO dynamique pour M2)."""
     if args.dataset == "evimo":
@@ -219,6 +299,19 @@ def train_coupled(args):
     unfrozen = False
     optimizer = torch.optim.AdamW(ms.parameters(), lr=args.ms_lr, weight_decay=1e-4)
 
+    # Les diagnostics par patch (ω, seuil selfsup) ne sont calculés par eVONet que pour le
+    # sélecteur « scorer ».
+    want_diag = args.patch_selector.lower() == "scorer"
+
+    logger = RunLogger(
+        "train_coupled", vars(args),
+        exp=args.exp or os.path.basename(os.path.normpath(args.outdir)),
+        seed=args.seed, run_dir=args.run_dir or None,
+        launch_id=os.environ.get("LAUNCH_ID"),
+        resume_id=args.wandb_id or None,
+        images_every=args.images_every,
+    )
+
     total_steps = 0
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
@@ -260,7 +353,12 @@ def train_coupled(args):
             dyn_logits = ms(images)                       # (B, n, 1, Hp, Wp)
             dyn_mask = torch.sigmoid(dyn_logits)[:, :, 0]  # (B, n, Hp, Wp)
 
-            if args.selfsup:
+            # `return_selfsup` n'ajoute que des diagnostics DÉTACHÉS (résidu par patch,
+            # patches, index de frame) : ni la loss ni le graphe ne changent. On les
+            # demande donc aussi en M2, pour pouvoir loguer ω et le seuil médiane + k·MAD
+            # dans les deux jalons.
+            res_patch = patches_out = ix_out = None
+            if args.selfsup or want_diag:
                 traj, res_patch, patches_out, ix_out = net(
                     images, poses_w2c, disps, intrinsics, M=1024, STEPS=args.iters,
                     structure_only=False, patches_per_image=args.patches_per_image,
@@ -273,6 +371,7 @@ def train_coupled(args):
             loss, pose_l, flow_l = compute_pose_flow_loss(traj, args, so=False)
 
             mask_l = 0.0
+            selfsup_stats = {}
             if args.selfsup:
                 # M3 auto-supervisé : cible = patches à résidu anormalement haut (incohérents
                 # au mouvement rigide) = dynamiques. AUCUN GT. Seuil robuste médiane + k·MAD.
@@ -280,7 +379,10 @@ def train_coupled(args):
                 res = res_patch.view(-1)                                                   # (K,) détaché
                 med = res.median()
                 mad = (res - med).abs().median() + 1e-6
+                selfsup_stats = {"median": float(med), "mad": float(mad),
+                                 "threshold": float(med + args.selfsup_k * mad)}
                 target = (res > (med + args.selfsup_k * mad)).float().detach()
+                selfsup_stats["pos_frac"] = float(target.mean())
                 mask_l = F.binary_cross_entropy(dyn_patch.clamp(1e-6, 1 - 1e-6), target)
                 loss = loss + args.mask_weight * mask_l
             elif gt_dyn is not None and args.mask_weight > 0:
@@ -294,6 +396,7 @@ def train_coupled(args):
             if args.mask_l1 > 0:
                 loss = loss + args.mask_l1 * dyn_mask.mean()
             # prior doux : pénalise mask_mean trop loin de la cible (évite collapse 0 ou 1)
+            soft_prior = 0.0
             if args.soft_prior_beta > 0:
                 soft_prior = args.soft_prior_beta * (dyn_mask.mean() - args.soft_prior_target) ** 2
                 loss = loss + soft_prior
@@ -311,6 +414,15 @@ def train_coupled(args):
                       f"| flow {flow_l:.4f} | mask_l {float(mask_l):.4f} "
                       f"| mask_mean {float(dyn_mask.mean()):.4f} "
                       f"| {'joint' if unfrozen else 'devo-frozen'}")
+                log_coupled_step(logger, total_steps, loss=loss, pose_l=pose_l,
+                                 flow_l=flow_l, mask_l=mask_l, soft_prior=soft_prior,
+                                 dyn_mask=dyn_mask, gt_dyn=gt_dyn, unfrozen=unfrozen,
+                                 dyn_patch_scores=_patch_scores(dyn_mask, patches_out, ix_out),
+                                 selfsup_stats=selfsup_stats)
+            if logger.should_log_images(total_steps):
+                log_coupled_images(logger, total_steps, images, dyn_mask, gt_dyn,
+                                   _patch_scores(dyn_mask, patches_out, ix_out),
+                                   patches_out)
             if total_steps > 0 and total_steps % args.save_every == 0:
                 save_coupled(args.outdir, net, ms, optimizer, total_steps, tag=f"step{total_steps}")
 
@@ -319,6 +431,8 @@ def train_coupled(args):
                 break
 
     save_coupled(args.outdir, net, ms, optimizer, total_steps, tag="final")
+    logger.summary({"coupling/final_step": total_steps})
+    logger.finish()
 
 
 if __name__ == "__main__":
@@ -328,6 +442,14 @@ if __name__ == "__main__":
     p.add_argument('--ms_weights', default=None, help='checkpoint modèle MS (best.pt) — None = scratch')
     p.add_argument('--ms_config', required=True, help='yaml entraînement MS')
     p.add_argument('--outdir', default='results_coupled/m2')
+    p.add_argument('--exp', default=None,
+                   help='nom d\'expérience pour wandb (group) ; défaut : nom du dossier de sortie')
+    p.add_argument('--run-dir', dest='run_dir', default=None,
+                   help='dossier du run, où écrire wandb.txt (posé par jobs/train_coupled.sh)')
+    p.add_argument('--wandb_id', default=None,
+                   help='id du run wandb à reprendre (reprise d\'un run interrompu)')
+    p.add_argument('--images_every', type=int, default=500,
+                   help='envoie voxels / masques / patches sur wandb tous les N steps (0 = jamais)')
     p.add_argument('--resume', default=None,
                    help='coupled_step<K>.pt depuis lequel reprendre (modèles + optimiseur + '
                         'compteur de steps) ; jobs/train_coupled.sh le remplit tout seul')
