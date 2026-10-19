@@ -1,0 +1,25 @@
+[build-system]
+# torch doit être importable au moment du build (extensions C++/CUDA) : on
+# installe donc toujours avec `pip install -e . --no-build-isolation`, dans
+# l'env conda créé depuis environment.yml / environment-cpu.yml.
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "madevo"
+version = "0.1.0"
+description = "Motion-Aware Deep Event Visual Odometry: segmentation de mouvement pour la VO événementielle apprise"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+# Les dépendances d'exécution sont décrites par environment.yml (serveur GPU)
+# et environment-cpu.yml (local), parce que la variante de torch (+cu118 / +cpu)
+# ne peut pas être exprimée ici sans forcer l'index PyPI.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+# Les paquets (devo, utils, ms_model) et les extensions CUDA sont déclarés dans
+# setup.py : ms_model vit encore sous MS_Model/ et l'emplacement est résolu à
+# l'installation.

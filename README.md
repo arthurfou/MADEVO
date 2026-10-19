@@ -54,27 +54,65 @@ Ground truth optical flow $\mathbf{f}$ for supervision is computed using poses a
 
 
 ## Setup
-The code was tested on Ubuntu 22.04 and CUDA Toolkit 11.x. We use Anaconda to manage our Python environment.
 
-First, clone the repo
+Testé sur Ubuntu 22.04 / WSL2 avec Python 3.11, torch 2.4 et CUDA 11.8. L'environnement
+est géré par conda (Miniforge, mamba ou micromamba conviennent), et `devo` comme
+`ms_model` s'installent en une seule commande.
+
 ```bash
-git clone https://github.com/tum-vision/DEVO.git --recursive
-cd DEVO
-```
-Then, create and activate the Anaconda environment
-```bash
-conda env create -f environment.yml
-conda activate devo
+git clone https://github.com/arthurfou/MADEVO.git
+cd MADEVO
 ```
 
-Next, install the DEVO package
-```bash
-# download and unzip Eigen source code
-wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
-unzip eigen-3.4.0.zip -d thirdparty
+### Serveur GPU (entraînement et évaluation)
 
-# install DEVO
-pip install .
+`environment.yml` fournit torch 2.4.1+cu118 (couvre Pascal `sm_61` → Hopper `sm_90`) et la
+chaîne de compilation des trois extensions CUDA héritées de DPVO (`cuda_corr`, `cuda_ba`,
+`lietorch_backends`), ainsi que les en-têtes Eigen 3.4.
+
+```bash
+mamba env create -f environment.yml      # ou: conda env create -f environment.yml
+conda activate madevo
+pip install -e . --no-build-isolation
+```
+
+- `--no-build-isolation` est obligatoire : la compilation des extensions importe `torch`,
+  que l'isolation PEP 517 cacherait.
+- Sur un nœud de login sans GPU visible, la détection d'architecture échoue : préciser
+  les cibles, par exemple `TORCH_CUDA_ARCH_LIST="8.0;8.6;9.0" pip install -e . --no-build-isolation`.
+- Si Eigen n'est pas fourni par l'environnement : `bash scripts/download/download_eigen.sh`
+  (ou poser `EIGEN_INCLUDE_DIR` vers un Eigen 3.4 existant).
+
+Vérification :
+
+```bash
+python -c "import cuda_ba, cuda_corr, lietorch_backends; print('extensions OK')"
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+### Machine locale sans GPU (développement, tests CPU, `--dry-run`)
+
+Même nom d'environnement, torch CPU, et les extensions CUDA sont sautées via
+`MADEVO_SKIP_CUDA_EXT` : tout ce qui fait tourner DEVO reste réservé aux serveurs GPU.
+
+```bash
+mamba env create -f environment-cpu.yml
+conda activate madevo
+MADEVO_SKIP_CUDA_EXT=1 pip install -e . --no-build-isolation
+```
+
+Vérification :
+
+```bash
+python -c "import ms_model, devo; from rosbags.typesys import Stores; print('import OK')"
+pytest
+```
+
+### Poids pré-entraînés et données
+
+```bash
+bash scripts/download/download_devo_weights.sh   # pretrained/DEVO.pth (~40 Mo)
+bash scripts/download/download_evimo2.sh         # datasets/evimo2/ (téléchargement + prétraitement)
 ```
 
 ### Only for Training

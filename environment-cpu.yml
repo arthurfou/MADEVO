@@ -1,0 +1,24 @@
+# Environnement MADEVO pour une machine sans GPU (développement, tests CPU,
+# --dry-run) : même nom d'env `madevo`, torch 2.4 CPU, pas de chaîne CUDA.
+#
+#   mamba env create -f environment-cpu.yml
+#   conda activate madevo
+#   MADEVO_SKIP_CUDA_EXT=1 pip install -e . --no-build-isolation
+#
+# Les extensions CUDA (cuda_corr, cuda_ba, lietorch_backends) ne sont pas
+# compilées : tout ce qui fait tourner DEVO reste réservé aux serveurs GPU.
+name: madevo
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - eigen=3.4
+
+  - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cpu
+    - torch==2.4.1+cpu
+    - torchvision==0.19.1+cpu
+    - --find-links https://data.pyg.org/whl/torch-2.4.0+cpu.html
+    - torch-scatter==2.1.2
+    - -r requirements.txt

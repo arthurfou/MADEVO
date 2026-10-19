@@ -1,0 +1,38 @@
+# Dépendances communes à l'env GPU (environment.yml) et à l'env CPU local
+# (environment-cpu.yml). torch, torchvision et torch-scatter n'y figurent pas :
+# leur variante (+cu118 / +cpu) est choisie par le fichier d'environnement.
+
+numpy<2
+scipy
+matplotlib
+pandas
+seaborn
+tqdm
+pyyaml
+tensorboard
+wandb
+
+# E/S datasets
+h5py
+hdf5plugin
+opencv-python
+plyfile
+natsort
+gdown
+lz4
+zstandard
+# >= 0.10 : API `rosbags.typesys.Stores`, requise par utils/bag_utils.py
+rosbags>=0.10,<0.12
+
+# Évaluation de trajectoires
+evo
+tabulate
+
+# Divers (hérités de DEVO / DPVO)
+numba
+yacs
+configargparse
+ruamel.yaml
+
+# Tests CPU
+pytest

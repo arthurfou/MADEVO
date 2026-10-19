@@ -1,59 +1,47 @@
-name: devofou
+# Environnement MADEVO pour les serveurs GPU : torch 2.4 + CUDA 11.8
+# (couvre Pascal sm_61 → Hopper sm_90) et la chaîne de compilation des
+# extensions CUDA de DEVO.
+#
+#   mamba env create -f environment.yml
+#   conda activate madevo
+#   pip install -e . --no-build-isolation
+#
+# En local sans GPU, utiliser environment-cpu.yml à la place.
+name: madevo
 channels:
-  - pytorch
+  # nvidia : les paquets CUDA 11.8 ne sont pas sur conda-forge, qui ne
+  # packageait que `cudatoolkit` (sans nvcc) pour les séries 11.x.
   - nvidia
-  - pyg
   - conda-forge
 dependencies:
-  - python=3.10
+  - python=3.11
   - pip
-  
-  # PyTorch 1.12 + CUDA 11.6 (sweet spot pour V100 + headers modernes)
-  - pytorch=1.12.1
-  - torchvision=0.13.1
-  - torchaudio=0.12.1
-  - cudatoolkit=11.6
-  
-  # CUDA dev tools (nvcc) — nécessaire pour compiler les extensions
-  - cuda-nvcc=11.6
-  - cuda-cudart-dev=11.6
-  - cuda-libraries-dev=11.6
-  
-  # Sysroot compatible avec CUDA 11.x (évite le bug __int128)
+
+  # Compilation des extensions C++/CUDA : nvcc, en-têtes et lib CUDA runtime,
+  # thrust/cub (cuda-cccl, requis par c10/util/complex.h), gcc compatible.
+  # Versions complètes obligatoires : les métapaquets 11.8 du canal nvidia ont
+  # des dépendances sans borne supérieure, donc `cuda-toolkit=11.8` ou
+  # `cuda-cudart-dev=11.8` seuls font remonter cudart en 12.x/13.x et le lien
+  # échoue sur -lcudart. cublas / cusolver ne sont pas nécessaires : les
+  # extensions ne lient que cudart, et torch embarque ses propres libs.
+  - nvidia::cuda-nvcc=11.8.89
+  - nvidia::cuda-cudart=11.8.89
+  - nvidia::cuda-cudart-dev=11.8.89
+  - nvidia::cuda-cccl=11.8.89
+  - gcc_linux-64=11
+  - gxx_linux-64=11
   - sysroot_linux-64=2.17
-  - gcc_linux-64=10
-  - gxx_linux-64=10
-  
-  # libxcrypt pour avoir crypt.h proprement
   - libxcrypt
-  
-  # PyG extension
-  - pytorch-scatter
-  
-  # Scientific stack
-  - numpy
-  - scipy
-  - matplotlib
-  - tqdm
-  - pyyaml
-  - tensorboard
-  
+  - ninja
+
+  # En-têtes Eigen pour lietorch (évite le téléchargement manuel ;
+  # repli : bash scripts/download/download_eigen.sh)
+  - eigen=3.4
+
   - pip:
-    - plyfile
-    - opencv-python
-    - h5py
-    - hdf5plugin
-    - evo
-    - gdown
-    - natsort
-    - pandas
-    - seaborn
-    - rerun-sdk==0.14.1
-    - rosbags
-    - numba
-    - tabulate
-    - yacs
-    - configargparse
-    - ruamel.yaml
-    - lz4
-    - zstandard
+    - --extra-index-url https://download.pytorch.org/whl/cu118
+    - torch==2.4.1+cu118
+    - torchvision==0.19.1+cu118
+    - --find-links https://data.pyg.org/whl/torch-2.4.0+cu118.html
+    - torch-scatter==2.1.2
+    - -r requirements.txt
