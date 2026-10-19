@@ -9,8 +9,8 @@ Lit chaque répertoire de séquence EVIMO2 (samsung_mono) et produit :
 
 Usage:
     python scripts/preprocess_evimo2.py \\
-        --src  /home/i/i0002573/arthur_ipal/datasets/evimo2/samsung_mono/imo/eval \\
-        --dst  /home/i/i0002573/arthur_ipal/datasets/evimo2/eval_preprocessed
+        --src  datasets/evimo2/samsung_mono/imo/eval \\
+        --dst  datasets/evimo2/eval_preprocessed
 
 Structure src attendue :
     {src}/{seq_name}/

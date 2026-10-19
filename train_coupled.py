@@ -15,7 +15,7 @@ valider le flux de gradient. Le vrai gain M2 (« couplé > découplé ») se mes
 `--datapath` sur des séquences DYNAMIQUES avec pose GT (EVIMO) — et, pour la variante
 supervisée, en fournissant un masque GT par le dataset (voir `--help` / TODO gt_dyn_mask).
 
-Mono-GPU (fine-tuning). Lancer depuis la racine du repo DEVO, env `devo`, `ms_model` installé.
+Mono-GPU (fine-tuning). Lancer depuis la racine du repo, env conda `madevo`.
 """
 import os
 import random
@@ -168,7 +168,18 @@ def build_dataset(args):
         if not seqs:  # à défaut, réutilise le split train du yaml MS
             data_cfg = yaml.safe_load(open(args.ms_config))["data"]
             seqs = data_cfg["train_sequences"]
+        # Les séquences du yaml MS sont relatives à la racine de la caméra, p. ex.
+        # « imo/train/scene10_dyn_train_00_000000 » : --datapath doit donc valoir
+        # datasets/evimo2/samsung_mono, et non datasets/evimo2 (erreur des anciens
+        # scripts Slurm, qui cherchaient les séquences un niveau trop haut).
         npz_paths = [os.path.join(args.datapath, s) for s in seqs]
+        missing = [p for p in npz_paths if not os.path.exists(p)]
+        if missing:
+            raise FileNotFoundError(
+                f"{len(missing)}/{len(npz_paths)} séquences EVIMO introuvables sous "
+                f"--datapath={args.datapath} (p. ex. {missing[0]}). Pour EVIMO2, la racine "
+                f"est datasets/evimo2/samsung_mono."
+            )
         return EvimoClipDataset(
             npz_paths, n_frames=args.n_frames, nb_time_bins=args.nb_time_bins,
             patch_size=args.patch_size, depth_scale=args.depth_scale,
@@ -301,7 +312,9 @@ if __name__ == "__main__":
     # données
     p.add_argument('--dataset', default="tartan_evs", choices=["tartan_evs", "evimo"],
                    help='tartan_evs (statique, valide la plomberie) ou evimo (dynamique, run M2 réel)')
-    p.add_argument('--datapath', required=True, help='racine des données (tartan | racine npz EVIMO)')
+    p.add_argument('--datapath', required=True,
+                   help='racine des données : tartan, ou racine de la caméra EVIMO '
+                        '(EVIMO2 : datasets/evimo2/samsung_mono)')
     p.add_argument('--n_frames', type=int, default=15)
     p.add_argument('--fgraph_pickle', default="")
     p.add_argument('--train_split', default="")

@@ -19,7 +19,7 @@ Le masque oracle vient de la segmentation GT EVIMO (npz `mask`+`meta`), sous-éc
         --mask_root /chemin/vers/evimo_full/eval \
         --thicken_radius 2
 
-`ms_model` doit être installé dans l'env (`pip install -e MS_Model`).
+`ms_model` doit être installé dans l'env (`pip install -e .`).
 """
 import os
 import argparse

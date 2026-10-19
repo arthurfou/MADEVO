@@ -87,32 +87,15 @@ def cuda_extensions():
     ]
 
 
-def packages_and_dirs():
-    """(packages, package_dir) pour devo, utils et ms_model.
-
-    `ms_model` est encore sous MS_Model/ ; la remontée à la racine (tâche T3)
-    n'oblige pas à toucher ce fichier.
-    """
-    packages = find_packages(where=ROOT, include=["devo*"])
-    package_dir = {}
-
-    # `utils` et ses modules n'ont pas d'__init__.py (paquet implicite).
-    packages.append("utils")
-
-    if osp.isdir(osp.join(ROOT, "ms_model")):
-        packages += find_packages(where=ROOT, include=["ms_model*"])
-    elif osp.isdir(osp.join(ROOT, "MS_Model", "ms_model")):
-        ms_packages = find_packages(where=osp.join(ROOT, "MS_Model"), include=["ms_model*"])
-        packages += ms_packages
-        for pkg in ms_packages:
-            package_dir[pkg] = osp.join("MS_Model", *pkg.split("."))
-    else:
-        sys.exit("MADEVO: paquet ms_model introuvable (ni ./ms_model ni ./MS_Model/ms_model)")
-
-    return packages, package_dir
+def find_our_packages():
+    """Les paquets du repo : devo, ms_model, et `utils` (paquet implicite, sans __init__)."""
+    packages = find_packages(where=ROOT, include=["devo*", "ms_model*"])
+    if "ms_model" not in packages:
+        sys.exit("MADEVO: paquet ms_model introuvable à la racine du repo")
+    return packages + ["utils"]
 
 
-packages, package_dir = packages_and_dirs()
+packages = find_our_packages()
 ext_modules = cuda_extensions()
 cmdclass = {}
 if ext_modules:
@@ -122,7 +105,6 @@ if ext_modules:
 
 setup(
     packages=packages,
-    package_dir=package_dir,
     ext_modules=ext_modules,
     cmdclass=cmdclass,
 )

@@ -20,6 +20,5 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest"]
 
-# Les paquets (devo, utils, ms_model) et les extensions CUDA sont déclarés dans
-# setup.py : ms_model vit encore sous MS_Model/ et l'emplacement est résolu à
-# l'installation.
+# Les paquets (devo, utils, ms_model) et les extensions CUDA sont déclarés dans setup.py,
+# qui a besoin de torch pour construire les extensions.

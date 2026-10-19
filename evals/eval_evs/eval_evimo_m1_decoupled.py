@@ -17,11 +17,11 @@ l'oracle GT. Compare 3 passes : vanilla / oracle (plafond) / appris (baseline).
         --weights DEVO.pth \
         --val_split splits/evimo/evimo_val.txt \
         --mask_root /chemin/vers/evimo_full/eval \
-        --ms_weights ../MS_Model/checkpoints/v4-full-run1/best.pt \
-        --ms_config  ../MS_Model/configs/convlstm_v4_full.yaml \
+        --ms_weights runs/v4_evimo2/<date>/seed1/checkpoints/best_iou.pt \
+        --ms_config  configs/ms/v4_evimo2.yaml \
         --threshold 0.5
 
-`ms_model` doit être installé dans l'env (`pip install -e MS_Model`).
+`ms_model` doit être installé dans l'env (`pip install -e .`).
 """
 import os
 import argparse

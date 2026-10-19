@@ -18,8 +18,8 @@ Format EVIMO1-compatible (un seul .npz par séquence) :
 
 Usage:
     python scripts/convert_evimo2_to_evimo1.py \\
-        --src  /home/i/i0002573/arthur_ipal/datasets/evimo2/samsung_mono \\
-        --dst  /home/i/i0002573/arthur_ipal/datasets/evimo2/evimo1_format \\
+        --src  datasets/evimo2/samsung_mono \\
+        --dst  datasets/evimo2/evimo1_format \\
         [--split imo]   # sous-répertoire dans samsung_mono/ (imo, sfm, …)
 
 Chaque séquence srcdir/imo/{train,eval}/{seq_name}/ produit :

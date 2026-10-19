@@ -9,7 +9,7 @@ Usage :
     python evals/eval_evs/eval_rpg_central_table.py \
         --datapath /path/to/rpg_dataset \
         --weights DEVO.pth \
-        --ms_config /path/to/MS_Model/configs/convlstm_v4_full.yaml \
+        --ms_config configs/ms/v4_evimo2.yaml \
         [--ms_decoupled /path/ms_final_m1.pt] \
         [--ms_coupled_sup /path/ms_final_m2.pt] \
         [--ms_coupled_selfsup /path/ms_final_m3.pt] \

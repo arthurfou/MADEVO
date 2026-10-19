@@ -19,12 +19,12 @@ How it works:
 
 Usage:
     python scripts/filter_evimo_objects.py \\
-        --datapath /home/i/i0002573/datasets/evimo/eval \\
-        --outpath  /home/i/i0002573/datasets/evimo_filtered_2805/eval
+        --datapath datasets/evimo/eval \\
+        --outpath  datasets/evimo_filtered_2805/eval
 
     # dry-run (no disk write):
     python scripts/filter_evimo_objects.py \\
-        --datapath /home/i/i0002573/datasets/evimo/eval \\
+        --datapath datasets/evimo/eval \\
         --outpath  /tmp/evimo_dry \\
         --dry_run
 """
