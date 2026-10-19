@@ -1,0 +1,8 @@
+# M2 from scratch : pas d'initialisation MS, prior doux pour éviter le masque constant.
+extends: _base_evimo2.yaml
+exp: m2_evimo2_scratch
+ms:
+  init: null
+loss:
+  mode: supervised
+  soft_prior_beta: 0.5

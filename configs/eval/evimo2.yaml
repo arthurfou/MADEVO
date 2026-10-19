@@ -1,0 +1,26 @@
+# Table centrale EVIMO2 : vanilla / oracle / M1 / M2 / M3 sur les 8 séquences d'éval.
+# Lancement : launch/tmux.sh --seeds 1-5 jobs/eval_table.sh configs/eval/evimo2.yaml
+#
+# ⚠️ Le script d'éval actuel calcule toujours vanilla et oracle ; `methods` ne pilote pour
+# l'instant que M1, M2 et M3. L'éval unifiée de T6 honorera la liste complète.
+dataset:
+  name: evimo2
+  root: datasets/evimo2/eval_preprocessed      # --datapath (format DEVO)
+  mask_root: datasets/evimo2/evimo1_format     # --mask_root (masques GT)
+  split: splits/evimo2/evimo2_val.txt
+
+devo:
+  weights: pretrained/DEVO.pth
+  config: config/eval_evimo.yaml               # hyperparamètres VO de DEVO
+
+methods: [vanilla, oracle, m1, m2, m3]
+sources: evimo2                                # préréglage de configs/eval/sources/
+
+oracle:
+  thicken_radius: 2
+  mask_motion: all                             # DOIT valoir le mode de l'entraînement (T7)
+  motion_thresh_m: 0.02
+  motion_window_s: 0.2
+
+threshold: null                                # null = score continu, sinon seuil binaire
+export_map: false

@@ -1,0 +1,7 @@
+# M3 — couplé auto-supervisé (masque supervisé par les résidus DBA), MS initialisé.
+extends: _base_evimo2.yaml
+exp: m3_evimo2
+ms:
+  init: runs/v4_evimo2/@latest
+loss:
+  mode: selfsup

@@ -220,6 +220,25 @@ def train_coupled(args):
     optimizer = torch.optim.AdamW(ms.parameters(), lr=args.ms_lr, weight_decay=1e-4)
 
     total_steps = 0
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location=device)
+        net.load_state_dict(ckpt['devo'])
+        ms.load_state_dict(ckpt['ms'])
+        total_steps = int(ckpt['steps'])
+        # L'optimiseur n'a pas les mêmes groupes de paramètres avant et après le dégel :
+        # il faut reconstruire le bon AVANT de recharger son état.
+        if total_steps >= args.freeze_devo_steps:
+            set_requires_grad(net, True)
+            optimizer = torch.optim.AdamW(
+                [{"params": ms.parameters(), "lr": args.ms_lr},
+                 {"params": net.parameters(), "lr": args.devo_lr}], weight_decay=1e-4)
+            unfrozen = True
+        optimizer.load_state_dict(ckpt['optimizer'])
+        print(f"[resume] reprise de {args.resume} au step {total_steps}"
+              f"{' (DEVO déjà dégelé)' if unfrozen else ''}", flush=True)
+        if total_steps >= args.steps:
+            print(f"[resume] déjà terminé ({total_steps}/{args.steps} steps), rien à faire.")
+            return
     while total_steps < args.steps:
         for blob in loader:
             blob.pop()  # scene_id (str)
@@ -309,6 +328,9 @@ if __name__ == "__main__":
     p.add_argument('--ms_weights', default=None, help='checkpoint modèle MS (best.pt) — None = scratch')
     p.add_argument('--ms_config', required=True, help='yaml entraînement MS')
     p.add_argument('--outdir', default='results_coupled/m2')
+    p.add_argument('--resume', default=None,
+                   help='coupled_step<K>.pt depuis lequel reprendre (modèles + optimiseur + '
+                        'compteur de steps) ; jobs/train_coupled.sh le remplit tout seul')
     # données
     p.add_argument('--dataset', default="tartan_evs", choices=["tartan_evs", "evimo"],
                    help='tartan_evs (statique, valide la plomberie) ou evimo (dynamique, run M2 réel)')

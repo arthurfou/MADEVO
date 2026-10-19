@@ -1,0 +1,8 @@
+# M3 from scratch : pas d'initialisation MS, prior doux.
+extends: _base_evimo2.yaml
+exp: m3_evimo2_scratch
+ms:
+  init: null
+loss:
+  mode: selfsup
+  soft_prior_beta: 0.5

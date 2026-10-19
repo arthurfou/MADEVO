@@ -1,0 +1,37 @@
+# Base commune des entraînements couplés EVIMO2 (M2 et M3). Les configs concrètes
+# n'écrasent que ce qui les distingue : loss.mode, ms.init, model.
+#
+# Budget arrêté pour le papier : 40 000 steps, dégel de DEVO à 10 000 (cf. TASKS.md).
+data:
+  root: datasets/evimo2/samsung_mono      # racine de la caméra, pas datasets/evimo2
+  mask_thicken_radius: 3
+  mask_motion: all                        # doit valoir le mode de l'entraînement MS (T7)
+  motion_thresh_m: 0.02
+  motion_window_s: 0.2
+
+devo:
+  weights: pretrained/DEVO.pth
+
+ms:
+  arch: configs/ms/v4_evimo2.yaml         # architecture ET split train du MS
+  init: null                              # runs/<exp>/@latest, ou null = from scratch
+  ckpt: best_iou.pt
+
+loss:
+  mode: supervised                        # supervised (M2) | selfsup (M3)
+  selfsup_k: 3.0
+  mask_weight: 1.0
+  soft_prior_beta: 0.0                    # 0.5 pour les variantes scratch
+  soft_prior_target: 0.1
+
+train:
+  steps: 40000
+  freeze_devo_steps: 10000
+  n_frames: 15
+  ms_lr: 1.0e-4
+  devo_lr: 2.0e-5
+  clip: 10.0
+  save_every: 2000
+
+log:
+  every: 20

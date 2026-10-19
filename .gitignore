@@ -149,9 +149,7 @@ dist
 *.vscode/
 *.pth
 *.pt
-/tests/
 checkpoints
-runs
 cache
 *.out
 *.o
@@ -173,3 +171,14 @@ TartanAirEVS.pickle
 results/
 results_coupled/
 *.npy
+
+# --- MADEVO : sorties de runs (cf. JOBS_AND_RUNS.md §4) ---
+# /datasets/ et /pretrained/ sont déjà ignorés ci-dessus ; sans barre finale pour couvrir
+# le cas d'un lien symbolique vers un disque de données.
+/datasets
+/pretrained
+/runs
+/evals_out
+/logs
+/wandb
+/paths.env

@@ -1,3 +1,7 @@
+# Entraînement du modèle de motion segmentation seul (jalon M1).
+# Lancement : launch/tmux.sh --seeds 1-5 jobs/train_ms.sh configs/ms/v4_evimo2.yaml
+exp: v4_evimo2
+
 data:
   root: datasets/evimo2/samsung_mono
   train_sequences:
@@ -37,6 +41,12 @@ data:
   nb_time_bins: 5
   patch_size: 4
   mask_thicken_radius: 3
+  # Définition de « dynamique » dans le masque GT (cf. TASKS.md T7) :
+  # all = tous les objets annotés par VICON (comportement du stage, ablation),
+  # sequence = objets mobiles quelque part dans la séquence, frame = autour de t.
+  mask_motion: all
+  motion_thresh_m: 0.02
+  motion_window_s: 0.2
 
 model:
   name: convlstm_v4
@@ -52,9 +62,7 @@ training:
   loss: bce_dice
   loss_pos_weight: 10.0
   num_workers: 4
-  checkpoint_dir: checkpoints
 
 wandb:
   project: ms-model
   entity: arthurfou-cole-polytechnique
-  name: "evimo2-run1"

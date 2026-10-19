@@ -1,0 +1,7 @@
+# Provenance des checkpoints M1/M2/M3 pour la table EVIMO2 nominale.
+# `@latest` = dernier lancement terminé (DONE) pour la seed évaluée ; pour le papier,
+# remplacer par un launch_id explicite afin que le manifest soit reproductible.
+ms_arch: configs/ms/v4_evimo2.yaml
+m1: {ms: runs/v4_evimo2/@latest, ckpt: best_iou.pt}
+m2: {coupled: runs/m2_evimo2/@latest}
+m3: {coupled: runs/m3_evimo2/@latest}

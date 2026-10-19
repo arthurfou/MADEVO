@@ -1,29 +1,40 @@
+# Smoke test CPU du pipeline MS : 2 epochs sur une séquence EVIMO2, pour vérifier que
+# jobs/, launch/ et l'entraînement tiennent debout avant d'aller sur un serveur.
+# Lancement : jobs/train_ms.sh configs/ms/smoke.yaml
+#
+# N'a aucune valeur scientifique : train et val sont deux séquences du split d'éval,
+# les seules présentes sur une machine de développement.
+exp: ms_smoke
+
 data:
-  root: ../datasets/EV-IMO/eval
+  root: datasets/evimo2/samsung_mono
   train_sequences:
-    - box/npz/seq_00.npz
+    - imo/eval/scene13_dyn_test_00_000000
   val_sequences:
-    - tabletop/npz/seq_00.npz
-  seq_len: 16
+    - imo/eval/scene13_dyn_test_05_000000
+  seq_len: 8
   nb_time_bins: 5
   patch_size: 4
   mask_thicken_radius: 3
+  mask_motion: all
+  motion_thresh_m: 0.02
+  motion_window_s: 0.2
 
 model:
   name: convlstm_v4
-  hidden_dim: 96
+  hidden_dim: 32
   num_groups: 8
 
 training:
-  epochs: 3
-  batch_size: 2
+  epochs: 2
+  batch_size: 1
   lr: 1.0e-3
+  weight_decay: 1.0e-4
+  use_scheduler: false
   loss: bce_dice
   loss_pos_weight: 10.0
   num_workers: 0
-  checkpoint_dir: checkpoints
 
 wandb:
-  project: ms-model
+  project: madevo
   entity: arthurfou-cole-polytechnique
-  name: ""

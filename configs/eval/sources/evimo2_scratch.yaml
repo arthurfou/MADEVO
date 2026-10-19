@@ -1,0 +1,6 @@
+# Variantes couplées entraînées sans initialisation MS. M1 reste le MS découplé nominal :
+# « scratch » ne concerne que les runs couplés.
+ms_arch: configs/ms/v4_evimo2.yaml
+m1: {ms: runs/v4_evimo2/@latest, ckpt: best_iou.pt}
+m2: {coupled: runs/m2_evimo2_scratch/@latest}
+m3: {coupled: runs/m3_evimo2_scratch/@latest}

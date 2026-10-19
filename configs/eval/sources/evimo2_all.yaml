@@ -1,0 +1,6 @@
+# Ablation du mode de masque GT (T7) : les MS et les couplés entraînés avec
+# `mask_motion: all`, à comparer au mode retenu pour le papier.
+ms_arch: configs/ms/v4_evimo2.yaml
+m1: {ms: runs/v4_evimo2_all/@latest, ckpt: best_iou.pt}
+m2: {coupled: runs/m2_evimo2_all/@latest}
+m3: {coupled: runs/m3_evimo2_all/@latest}

@@ -1,0 +1,5 @@
+# Ablation de capacité : MS large (hidden_dim=128) partout.
+ms_arch: configs/ms/v4large_evimo2.yaml
+m1: {ms: runs/v4large_evimo2/@latest, ckpt: best_iou.pt}
+m2: {coupled: runs/m2_evimo2_large/@latest}
+m3: {coupled: runs/m3_evimo2_large/@latest}

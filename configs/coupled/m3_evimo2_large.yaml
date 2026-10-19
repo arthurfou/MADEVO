@@ -1,0 +1,8 @@
+# M3 avec le MS large (hidden_dim=128) : ablation de capacité.
+extends: _base_evimo2.yaml
+exp: m3_evimo2_large
+ms:
+  arch: configs/ms/v4large_evimo2.yaml
+  init: runs/v4large_evimo2/@latest
+loss:
+  mode: selfsup

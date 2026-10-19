@@ -1,4 +1,5 @@
 import argparse
+import os
 from pathlib import Path
 from typing import Union
 
@@ -82,7 +83,19 @@ def confirm_overwrite_dir(checkpoint_dir: Path) -> None:
             raise SystemExit("Run annule.")
 
 
-def main(config_path: str, data_root_override: str = None, wandb_name_override: str = None):
+def set_seed(seed: int) -> None:
+    """Seed torch / numpy / random, pour que `--seeds 1-5` produise 5 runs distincts."""
+    import random
+    import numpy as np
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def main(config_path: str, data_root_override: str = None, wandb_name_override: str = None,
+         run_dir: str = None, seed: int = None):
     config = yaml.safe_load(Path(config_path).read_text())
     train_cfg = config["training"]
     wandb_cfg = config["wandb"]
@@ -92,17 +105,28 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
         data_cfg["root"] = data_root_override
         print(f"[data] root override: {data_root_override}", flush=True)
 
+    if seed is not None:
+        set_seed(seed)
+        print(f"[seed] torch/numpy/random seedés à {seed}", flush=True)
+
+    # Avec --run-dir (jobs/train_ms.sh), les checkpoints vivent dans le dossier du run et
+    # ne dépendent plus du nom wandb : c'est ce qui rend la reprise fiable même en mode
+    # offline ou disabled (cf. INTEGRITY_CHECK.md, point 5).
     fixed_name = wandb_name_override or wandb_cfg.get("name") or None
-    checkpoint_base = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
+    if run_dir:
+        checkpoint_dir = Path(run_dir) / "checkpoints"
+        if seed is not None and not fixed_name:
+            fixed_name = f"{config.get('exp', Path(config_path).stem)}_s{seed}"
+    else:
+        checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints")) / (fixed_name or "")
 
     resume_ckpt = None
-    if fixed_name:
-        checkpoint_dir = checkpoint_base / fixed_name
+    if run_dir or fixed_name:
         resume_ckpt = load_resume_checkpoint(checkpoint_dir)
         if resume_ckpt is not None:
-            print(f"[resume] reprise du run '{fixed_name}' a partir de l'epoch "
+            print(f"[resume] reprise depuis {checkpoint_dir} a l'epoch "
                   f"{resume_ckpt['epoch'] + 1} (best_val_loss={resume_ckpt['best_val_loss']:.4f})", flush=True)
-        else:
+        elif not run_dir:
             confirm_overwrite_dir(checkpoint_dir)
 
     root = Path(data_cfg.get("root", "."))
@@ -168,8 +192,21 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
         config=config,
     )
 
-    checkpoint_dir = checkpoint_base / run.name
+    if not run_dir:
+        # Sans --run-dir on garde le comportement historique (dossier = nom du run wandb).
+        checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints")) / run.name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    if run_dir:
+        # `url` n'existe pas en mode offline selon la version de wandb : on n'échoue pas
+        # pour si peu, l'id suffit à retrouver le run après un `wandb sync`.
+        try:
+            url = run.url or "(hors ligne)"
+        except Exception:
+            url = "(hors ligne)"
+        (Path(run_dir) / "wandb.txt").write_text(
+            f"id: {run.id}\nname: {run.name}\nmode: {os.environ.get('WANDB_MODE', 'online')}\n"
+            f"url: {url}\n")
 
     if start_epoch >= train_cfg["epochs"]:
         print(f"[resume] entrainement deja termine ({start_epoch}/{train_cfg['epochs']} epochs), rien a faire.")
@@ -227,5 +264,11 @@ if __name__ == "__main__":
                         help="Ecrase data.root du yaml (utile sur cluster)")
     parser.add_argument("--wandb-name", default=None,
                         help="Ecrase wandb.name du yaml")
+    parser.add_argument("--run-dir", default=None,
+                        help="Dossier du run (jobs/train_ms.sh) : les checkpoints vont dans "
+                             "<run-dir>/checkpoints, indépendamment du nom wandb")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed torch/numpy/random")
     args = parser.parse_args()
-    main(args.config, data_root_override=args.data_root, wandb_name_override=args.wandb_name)
+    main(args.config, data_root_override=args.data_root, wandb_name_override=args.wandb_name,
+         run_dir=args.run_dir, seed=args.seed)
