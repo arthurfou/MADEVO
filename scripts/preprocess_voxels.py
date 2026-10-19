@@ -15,7 +15,7 @@ jamais relus : ils portent un autre nom et peuvent être supprimés.
 
 Usage :
     python scripts/preprocess_voxels.py --data-root ../datasets/evimo2/samsung_mono/imo/train
-    python scripts/preprocess_voxels.py --data-root ../datasets/evimo_full --nb-time-bins 5
+    python scripts/preprocess_voxels.py --data-root datasets/evimo2/samsung_mono --nb-time-bins 5
 """
 
 import argparse
