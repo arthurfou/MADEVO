@@ -6,6 +6,10 @@ from devo.utils import Timer
 from pathlib import Path
 import datetime
 import numpy as np
+
+# Métrique pure, déplacée dans utils/metrics.py pour être testable sans extensions CUDA ;
+# réexportée ici parce que douze scripts d'éval l'importent depuis utils.eval_utils.
+from utils.metrics import mean_scene_ate  # noqa: F401
 import yaml
 import glob
 from itertools import chain
@@ -467,11 +471,3 @@ def compute_median_results(results, all_results, dataset_name, outfolder=None):
     return results_dict
 
 
-def mean_scene_ate(results_dict):
-    """ATE moyen [cm] sur les scènes d'un dict produit par compute_median_results.
-
-    Seules les entrées par scène ("<dataset>/<scene>") sont moyennées : les clés
-    d'agrégat "AUC" et "AVG" ne sont pas des ATE et fausseraient la moyenne.
-    """
-    vals = [float(v) for k, v in results_dict.items() if k not in ("AUC", "AVG")]
-    return float(np.mean(vals)) if vals else float("nan")

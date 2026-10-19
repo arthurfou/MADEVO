@@ -23,10 +23,12 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.run_utils import (  # noqa: E402
-    REPO_ROOT, eval_dir, latest_coupled_checkpoint, resolve_config, resolve_ref, run_dir,
+    eval_dir, eval_manifest, latest_coupled_checkpoint, resolve_config,
+    resolve_eval_sources, resolve_ref, run_dir,
 )
 
-EVAL_SCRIPTS = {"evimo2": "evals/eval_evs/eval_evimo2_central_table.py"}
+# Une seule éval, paramétrée par la config (T6).
+EVAL_SCRIPT = "evals/eval_table.py"
 
 
 def _get(cfg: dict, dotted: str, default="__raise__"):
@@ -110,105 +112,23 @@ def argv_coupled(cfg, cfg_path, run_dir_path, seed):
 
 
 def argv_eval(cfg, cfg_path, out_dir, seed):
-    """Table d'évaluation : traduit la config + le préréglage `sources` en options."""
+    """Table d'évaluation : tout vient de la config résolue, rien n'est répété en options."""
     dataset = _get(cfg, "dataset.name")
-    script = EVAL_SCRIPTS.get(dataset)
-    if script is None:
-        raise ValueError(f"pas de script d'éval pour le dataset '{dataset}' "
-                         f"(connus : {sorted(EVAL_SCRIPTS)})")
-
-    methods = _get(cfg, "methods")
-    sources_name = _get(cfg, "sources")
-    sources = {}
-    if sources_name not in (None, "none"):
-        sources = resolve_config(REPO_ROOT / "configs/eval/sources" / f"{sources_name}.yaml")
-
-    args = ["python", script,
-            "--config", str(_get(cfg, "devo.config")),
-            "--datapath", str(_get(cfg, "dataset.root")),
-            "--mask_root", str(_get(cfg, "dataset.mask_root")),
-            "--val_split", str(_get(cfg, "dataset.split")),
-            "--weights", str(_get(cfg, "devo.weights")),
-            "--outdir", str(out_dir),
-            "--expname", f"{dataset}_{sources_name}_seed{seed}",
-            "--seed", str(seed),
-            "--exp", str(_get(cfg, "exp", f"eval_{dataset}")),
+    if dataset not in ("evimo2",):
+        raise ValueError(f"pas de runner d'éval pour le dataset '{dataset}'")
+    return ["python", EVAL_SCRIPT,
+            "--config", str(cfg_path),
             "--run-dir", str(out_dir),
-            "--thicken_radius", str(_get(cfg, "oracle.thicken_radius")),
-            "--mask_motion", str(_get(cfg, "oracle.mask_motion")),
-            "--motion_thresh_m", str(_get(cfg, "oracle.motion_thresh_m")),
-            "--motion_window_s", str(_get(cfg, "oracle.motion_window_s"))]
-
-    threshold = _get(cfg, "threshold", None)
-    if threshold is not None:
-        args += ["--threshold", str(threshold)]
-
-    if sources:
-        args += ["--ms_config", str(_get(sources, "ms_arch"))]
-    elif any(m in methods for m in ("m1", "m2", "m3")):
-        raise ValueError("methods contient m1/m2/m3 mais sources vaut 'none'")
-    else:
-        args += ["--ms_config", str(_get(cfg, "dataset.ms_arch_fallback",
-                                         "configs/ms/v4_evimo2.yaml"))]
-
-    if "m1" in methods:
-        ms_dir = resolve_ref(_get(sources, "m1.ms"), seed)
-        args += ["--ms_decoupled",
-                 str(Path(ms_dir) / "checkpoints" / _get(sources, "m1.ckpt", "best_iou.pt"))]
-    for method, sup in (("m2", "sup"), ("m3", "selfsup")):
-        if method not in methods:
-            continue
-        coupled = Path(resolve_ref(_get(sources, f"{method}.coupled"), seed)) / "checkpoints"
-        args += [f"--devo_coupled_{sup}", str(coupled / "devo_final.pth"),
-                 f"--ms_coupled_{sup}", str(coupled / "ms_final.pt")]
-    return args
+            "--seed", str(seed)]
 
 
 ARGV_BUILDERS = {"ms": argv_ms, "coupled": argv_coupled, "eval": argv_eval}
 
 
 def manifest(cfg, seed):
-    """Provenance exacte des checkpoints d'une éval, méthode par méthode.
-
-    C'est la pièce qui évite le flou des tables cross-dataset du stage, dont on ne sait
-    plus quels checkpoints elles ont chargés (cf. JOBS_AND_RUNS.md §9).
-    """
-    methods = _get(cfg, "methods")
-    sources_name = str(_get(cfg, "sources"))
-    out = {
-        "seed": seed,
-        "dataset": _get(cfg, "dataset.name"),
-        "sources": sources_name,
-        "methods": list(methods),
-        "devo_weights": str(_get(cfg, "devo.weights")),
-        "oracle": dict(_get(cfg, "oracle")),
-        "checkpoints": {},
-    }
-    if sources_name in (None, "none"):
-        return out
-
-    sources = resolve_config(REPO_ROOT / "configs/eval/sources" / f"{sources_name}.yaml")
-    out["ms_arch"] = str(_get(sources, "ms_arch"))
-
-    def describe(ref, run, files):
-        return {"ref": str(ref), "run_dir": str(run),
-                "files": {k: str(v) for k, v in files.items()},
-                "exists": all(Path(v).exists() for v in files.values())}
-
-    if "m1" in methods:
-        ref = _get(sources, "m1.ms")
-        run = Path(resolve_ref(ref, seed))
-        ckpt = run / "checkpoints" / _get(sources, "m1.ckpt", "best_iou.pt")
-        out["checkpoints"]["m1"] = describe(ref, run, {"ms": ckpt})
-    for method in ("m2", "m3"):
-        if method not in methods:
-            continue
-        ref = _get(sources, f"{method}.coupled")
-        run = Path(resolve_ref(ref, seed))
-        ckpts = run / "checkpoints"
-        out["checkpoints"][method] = describe(
-            ref, run, {"devo": ckpts / "devo_final.pth", "ms": ckpts / "ms_final.pt"})
-    return out
+    """Provenance des checkpoints d'une éval — même code que `evals/eval_table.py`."""
+    sources, ms_arch = resolve_eval_sources(cfg, seed)
+    return eval_manifest(cfg, seed, sources, ms_arch)
 
 
 # ----------------------------------------------------------------------- dossiers

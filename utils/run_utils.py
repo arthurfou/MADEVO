@@ -203,6 +203,68 @@ def latest_coupled_checkpoint(directory) -> Path | None:
     return max(steps)[1] if steps else None
 
 
+# ------------------------------------------------- provenance des évaluations
+
+def resolve_eval_sources(cfg, seed, repo_root: Path = None):
+    """{méthode: {ref, run_dir, devo, ms}} pour les méthodes apprises d'une éval.
+
+    Une seule implémentation, utilisée par `tools/cfg.py manifest` (qui tourne sans GPU)
+    et par `evals/eval_table.py`.
+    """
+    root = Path(repo_root or REPO_ROOT)
+    methods = cfg.get("methods", [])
+    name = str(cfg.get("sources"))
+    learned = [m for m in ("m1", "m2", "m3") if m in methods]
+
+    if name in ("none", "None", "", "null"):
+        if learned:
+            raise ValueError(f"`methods` demande {learned} mais `sources` vaut 'none'")
+        return {}, None
+
+    sources = resolve_config(root / "configs/eval/sources" / f"{name}.yaml")
+    ms_arch = sources.get("ms_arch")
+    out = {}
+
+    if "m1" in methods:
+        ref = sources["m1"]["ms"]
+        run = Path(resolve_ref(ref, seed, root=root / "runs" if repo_root else None))
+        out["m1"] = {"ref": str(ref), "run_dir": run, "devo": None,
+                     "ms": run / "checkpoints" / sources["m1"].get("ckpt", "best_iou.pt")}
+    for method in ("m2", "m3"):
+        if method not in methods:
+            continue
+        ref = sources[method]["coupled"]
+        run = Path(resolve_ref(ref, seed, root=root / "runs" if repo_root else None))
+        ckpts = run / "checkpoints"
+        out[method] = {"ref": str(ref), "run_dir": run,
+                       "devo": ckpts / "devo_final.pth", "ms": ckpts / "ms_final.pt"}
+    return out, ms_arch
+
+
+def eval_manifest(cfg, seed, sources, ms_arch) -> dict:
+    """Provenance exacte d'une table : ce qui a été chargé, et si le fichier existe."""
+    return {
+        "seed": seed,
+        "dataset": cfg["dataset"]["name"],
+        "sources": str(cfg.get("sources")),
+        "methods": list(cfg.get("methods", [])),
+        "devo_weights": str(cfg["devo"]["weights"]),
+        "devo_config": str(cfg["devo"].get("config", "")),
+        "oracle": dict(cfg.get("oracle", {})),
+        "threshold": cfg.get("threshold"),
+        "ms_arch": None if ms_arch is None else str(ms_arch),
+        "checkpoints": {
+            method: {
+                "ref": info["ref"],
+                "run_dir": str(info["run_dir"]),
+                "files": {k: str(info[k]) for k in ("devo", "ms") if info.get(k)},
+                "exists": all(Path(info[k]).exists() for k in ("devo", "ms") if info.get(k)),
+            }
+            for method, info in sources.items()
+        },
+    }
+
+
 # ------------------------------------------------------------------------ provenance
 
 def git_description() -> str:
