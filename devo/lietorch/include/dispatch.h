@@ -34,9 +34,9 @@
 
 #define DISPATCH_GROUP_AND_FLOATING_TYPES(GROUP_INDEX, TYPE, NAME, ...)              \
   [&] {                                                                              \
-    const auto& the_type = TYPE;                                                     \
-    /* don't use TYPE again in case it is an expensive or side-effect op */          \
-    at::ScalarType _st = ::detail::scalar_type(the_type);                            \
+    /* TYPE est un at::ScalarType (x.scalar_type()) : plus de passage par    */  \
+    /* ::detail::scalar_type(), supprimé des en-têtes ATen avec torch 2.x.   */  \
+    const at::ScalarType _st = TYPE;                                             \
     switch (_st) {                                                                   \
       PRIVATE_CASE_TYPE(GROUP_INDEX, at::ScalarType::Double, double, __VA_ARGS__)    \
       PRIVATE_CASE_TYPE(GROUP_INDEX, at::ScalarType::Float, float, __VA_ARGS__)      \
