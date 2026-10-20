@@ -82,6 +82,7 @@ def argv_coupled(cfg, cfg_path, run_dir_path, seed):
             "--exp", str(_get(cfg, "exp")),
             "--run-dir", str(run_dir_path),
             "--mask_weight", str(_get(cfg, "loss.mask_weight")),
+            "--mask_pos_weight", str(_get(cfg, "loss.mask_pos_weight", 1.0)),
             "--mask_thicken_radius", str(_get(cfg, "data.mask_thicken_radius")),
             "--mask_motion", str(_get(cfg, "data.mask_motion")),
             "--motion_thresh_m", str(_get(cfg, "data.motion_thresh_m")),

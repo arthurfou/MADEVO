@@ -36,7 +36,8 @@ sys.path.insert(0, str(REPO_ROOT / "evals" / "eval_evs"))
 # `utils.eval_utils` importe DEVO, donc les extensions CUDA : importé seulement au moment
 # d'évaluer, pour que `--dry-run` tourne sur une machine sans GPU.
 from utils.metrics import mean_scene_ate  # noqa: E402
-from utils.run_utils import eval_manifest, resolve_config, resolve_eval_sources  # noqa: E402
+from utils.run_utils import (eval_manifest, mask_definition_mismatches, resolve_config,  # noqa: E402
+                             resolve_eval_sources)
 from utils.wandb_logger import RunLogger  # noqa: E402
 
 # Nom affiché de chaque méthode, dans l'ordre des tables du rapport.
@@ -220,6 +221,10 @@ def main():
     if missing:
         raise SystemExit(f"checkpoints introuvables pour {missing} — voir "
                          f"{Path(args.run_dir) / 'manifest.yaml'}")
+    mismatches = mask_definition_mismatches(manifest)
+    if mismatches:
+        raise SystemExit("masque GT de l'oracle différent de celui de l'entraînement (T7) :\n  "
+                         + "\n  ".join(mismatches))
 
     if args.dry_run:
         print(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True))

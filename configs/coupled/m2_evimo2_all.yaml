@@ -1,0 +1,10 @@
+# Ablation du masque GT (T7) : M2 (supervisé) avec la définition du stage (`mask_motion: all`),
+# MS initialisé depuis l'ablation MS de la même seed.
+extends: m2_evimo2.yaml
+exp: m2_evimo2_all
+data:
+  mask_motion: all
+ms:
+  init: runs/v4_evimo2_all/@latest
+loss:
+  mask_pos_weight: 1.0    # BCE non pondérée, comme au stage

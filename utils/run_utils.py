@@ -241,6 +241,45 @@ def resolve_eval_sources(cfg, seed, repo_root: Path = None):
     return out, ms_arch
 
 
+MASK_DEF_KEYS = ("mask_motion", "motion_thresh_m", "motion_window_s")
+
+
+def _run_mask_definition(run_dir) -> dict | None:
+    """Définition du masque GT (`data.mask_motion`…) avec laquelle un run a été entraîné."""
+    path = Path(run_dir) / "config.yaml"
+    if not path.exists():
+        return None
+    data = load_yaml(path).get("data", {})
+    return {k: data.get(k) for k in MASK_DEF_KEYS}
+
+
+def _relevant_mask_keys(mode) -> tuple[str, ...]:
+    """Seuil et fenêtre n'ont de sens que pour les modes qui les utilisent."""
+    return {"all": ("mask_motion",),
+            "sequence": ("mask_motion", "motion_thresh_m")}.get(mode, MASK_DEF_KEYS)
+
+
+def mask_definition_mismatches(manifest) -> list[str]:
+    """Méthodes apprises entraînées avec une autre définition du masque GT que l'oracle.
+
+    Comparer un oracle `frame` à un MS entraîné en `all` (ou l'inverse) n'a pas de sens
+    (cf. T7) : l'éval s'arrête sur la liste renvoyée. Un run sans `config.yaml` (fabriqué
+    hors des jobs) n'est pas vérifiable et n'est pas signalé.
+    """
+    oracle = manifest.get("oracle", {})
+    out = []
+    for method, info in manifest["checkpoints"].items():
+        trained = info.get("mask")
+        if trained is None:
+            continue
+        keys = _relevant_mask_keys(oracle.get("mask_motion"))
+        diff = {k: (trained.get(k), oracle.get(k)) for k in keys if trained.get(k) != oracle.get(k)}
+        if diff:
+            out.append(f"{method} : " + ", ".join(f"{k} entraînement={a!r} oracle={b!r}"
+                                                  for k, (a, b) in diff.items()))
+    return out
+
+
 def eval_manifest(cfg, seed, sources, ms_arch) -> dict:
     """Provenance exacte d'une table : ce qui a été chargé, et si le fichier existe."""
     return {
@@ -259,6 +298,7 @@ def eval_manifest(cfg, seed, sources, ms_arch) -> dict:
                 "run_dir": str(info["run_dir"]),
                 "files": {k: str(info[k]) for k in ("devo", "ms") if info.get(k)},
                 "exists": all(Path(info[k]).exists() for k in ("devo", "ms") if info.get(k)),
+                "mask": _run_mask_definition(info["run_dir"]),
             }
             for method, info in sources.items()
         },

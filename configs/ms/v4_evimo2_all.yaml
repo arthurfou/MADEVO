@@ -1,0 +1,9 @@
+# Ablation du masque GT (T7) : MS de référence entraîné sur la définition du stage —
+# tous les objets annotés par VICON, décor immobile compris — avec la loss du stage.
+# Lancement : launch/tmux.sh --seeds 1-5 jobs/train_ms.sh configs/ms/v4_evimo2_all.yaml
+extends: v4_evimo2.yaml
+exp: v4_evimo2_all
+data:
+  mask_motion: all
+training:
+  loss_pos_weight: 10.0   # valeur du stage, réglée à l'époque pour ce mode

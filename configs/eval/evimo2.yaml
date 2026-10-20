@@ -20,8 +20,8 @@ sources: evimo2                                # préréglage de configs/eval/so
 
 oracle:
   thicken_radius: 2
-  mask_motion: all                             # DOIT valoir le mode de l'entraînement (T7)
-  motion_thresh_m: 0.02
+  mask_motion: frame                           # DOIT valoir le mode de l'entraînement (T7),
+  motion_thresh_m: 0.01                        # l'éval refuse sinon
   motion_window_s: 0.2
 
 threshold: null                                # null = score continu, sinon seuil binaire

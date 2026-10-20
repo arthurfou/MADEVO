@@ -1,0 +1,8 @@
+# Ablation du masque GT (T7) : table centrale des modèles entraînés en `mask_motion: all`,
+# avec un oracle défini de la même façon (l'éval refuse un oracle d'une autre définition).
+# Lancement : launch/tmux.sh --seeds 1-5 jobs/eval_table.sh configs/eval/evimo2_all.yaml
+extends: evimo2.yaml
+exp: eval_evimo2_all
+sources: evimo2_all
+oracle:
+  mask_motion: all

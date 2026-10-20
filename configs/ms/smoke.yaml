@@ -16,8 +16,8 @@ data:
   nb_time_bins: 5
   patch_size: 4
   mask_thicken_radius: 3
-  mask_motion: all
-  motion_thresh_m: 0.02
+  mask_motion: frame
+  motion_thresh_m: 0.01
   motion_window_s: 0.2
 
 model:
@@ -32,7 +32,7 @@ training:
   weight_decay: 1.0e-4
   use_scheduler: false
   loss: bce_dice
-  loss_pos_weight: 10.0
+  loss_pos_weight: 7.0
   images_every: 1      # voxels / masque prédit / masque GT sur wandb tous les N epochs
   num_workers: 0
 

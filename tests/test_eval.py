@@ -14,7 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from utils.metrics import mean_scene_ate as _mean_scene_ate  # noqa: E402
-from utils.run_utils import eval_manifest, resolve_config, resolve_eval_sources  # noqa: E402
+from utils.run_utils import (eval_manifest, mask_definition_mismatches, resolve_config,  # noqa: E402
+                             resolve_eval_sources)
 
 
 # ------------------------------------------------------------------ mean_scene_ate
@@ -126,6 +127,45 @@ def test_manifest_signale_un_checkpoint_manquant(faux_runs):
     assert manifest["checkpoints"]["m1"]["exists"] is True
 
 
+def _ecrit_config_run(run_dir, **data):
+    (Path(run_dir) / "config.yaml").write_text(yaml.safe_dump({"data": data}))
+
+
+def test_manifest_trace_le_masque_d_entrainement(faux_runs):
+    cfg = _eval_cfg()
+    sources, ms_arch = resolve_eval_sources(cfg, seed=1)
+    _ecrit_config_run(sources["m1"]["run_dir"], mask_motion="frame",
+                      motion_thresh_m=0.01, motion_window_s=0.2)
+    manifest = eval_manifest(cfg, 1, sources, ms_arch)
+    assert manifest["checkpoints"]["m1"]["mask"]["mask_motion"] == "frame"
+    assert manifest["checkpoints"]["m2"]["mask"] is None, "run sans config.yaml : non vérifiable"
+
+
+def test_oracle_et_entrainement_doivent_avoir_le_meme_masque(faux_runs):
+    cfg = _eval_cfg()
+    cfg["oracle"] = {**cfg["oracle"], "mask_motion": "frame",
+                     "motion_thresh_m": 0.01, "motion_window_s": 0.2}
+    sources, ms_arch = resolve_eval_sources(cfg, seed=1)
+    _ecrit_config_run(sources["m1"]["run_dir"], mask_motion="frame",
+                      motion_thresh_m=0.01, motion_window_s=0.2)
+    _ecrit_config_run(sources["m2"]["run_dir"], mask_motion="all",
+                      motion_thresh_m=0.01, motion_window_s=0.2)
+    _ecrit_config_run(sources["m3"]["run_dir"], mask_motion="frame",
+                      motion_thresh_m=0.02, motion_window_s=0.2)
+    pb = mask_definition_mismatches(eval_manifest(cfg, 1, sources, ms_arch))
+    assert [m.split(" ")[0] for m in pb] == ["m2", "m3"]
+    assert "mask_motion" in pb[0] and "motion_thresh_m" in pb[1]
+
+
+def test_mode_all_ignore_seuil_et_fenetre(faux_runs):
+    cfg = _eval_cfg()
+    cfg["oracle"] = {**cfg["oracle"], "mask_motion": "all"}
+    sources, ms_arch = resolve_eval_sources(cfg, seed=1)
+    _ecrit_config_run(sources["m1"]["run_dir"], mask_motion="all",
+                      motion_thresh_m=0.5, motion_window_s=9.0)
+    assert mask_definition_mismatches(eval_manifest(cfg, 1, sources, ms_arch)) == []
+
+
 # ------------------------------------------------------------------- table écrite
 
 def test_table_contient_les_cinq_lignes_et_le_delta(tmp_path):
@@ -211,3 +251,37 @@ def test_les_deux_providers_appliquent_le_correctif_de_timestamps(tmp_path, monk
 
     assert appels, "gt_timestamp_offset doit être appelé par la fabrique"
     assert recu["ts_offset_s"] == 1.25, "l'offset doit être transmis au provider"
+
+
+# ------------------------------------------- définition du masque GT dans les configs
+
+def _mask_def(cfg, section):
+    return {k: cfg[section].get(k) for k in ("mask_motion", "motion_thresh_m", "motion_window_s")}
+
+
+@pytest.mark.parametrize("eval_cfg, trainings", [
+    ("evimo2.yaml", ["ms/v4_evimo2.yaml", "ms/v4large_evimo2.yaml",
+                     "coupled/m2_evimo2.yaml", "coupled/m3_evimo2.yaml",
+                     "coupled/m2_evimo2_scratch.yaml", "coupled/m3_evimo2_scratch.yaml",
+                     "coupled/m2_evimo2_large.yaml", "coupled/m3_evimo2_large.yaml"]),
+    ("evimo2_all.yaml", ["ms/v4_evimo2_all.yaml",
+                         "coupled/m2_evimo2_all.yaml", "coupled/m3_evimo2_all.yaml"]),
+])
+def test_oracle_et_entrainements_de_la_campagne_ont_le_meme_masque(eval_cfg, trainings):
+    """T7 : le papier (frame) et l'ablation (all) doivent chacun être cohérents de bout en bout."""
+    oracle = _mask_def(resolve_config(REPO_ROOT / "configs/eval" / eval_cfg), "oracle")
+    for t in trainings:
+        assert _mask_def(resolve_config(REPO_ROOT / "configs" / t), "data") == oracle, t
+
+
+def test_les_ablations_all_ecrivent_ailleurs_et_partent_du_ms_all():
+    ms = resolve_config(REPO_ROOT / "configs/ms/v4_evimo2_all.yaml")
+    assert ms["exp"] == "v4_evimo2_all" and ms["data"]["mask_motion"] == "all"
+    assert ms["data"]["train_sequences"] == resolve_config(
+        REPO_ROOT / "configs/ms/v4_evimo2.yaml")["data"]["train_sequences"]
+    for m in ("m2", "m3"):
+        c = resolve_config(REPO_ROOT / f"configs/coupled/{m}_evimo2_all.yaml")
+        assert c["exp"] == f"{m}_evimo2_all"
+        assert c["ms"]["init"] == "runs/v4_evimo2_all/@latest"
+    ev = resolve_config(REPO_ROOT / "configs/eval/evimo2_all.yaml")
+    assert ev["sources"] == "evimo2_all" and ev["exp"] != "eval_evimo2"

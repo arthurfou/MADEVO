@@ -390,7 +390,9 @@ def train_coupled(args):
                 gt = gt_dyn
                 if gt.shape[-2:] != dyn_mask.shape[-2:]:
                     gt = F.interpolate(gt, size=dyn_mask.shape[-2:], mode="nearest")
-                mask_l = F.binary_cross_entropy(dyn_mask.clamp(1e-6, 1 - 1e-6), gt)
+                # pos_weight comme dans l'entraînement MS seul (T7) : 1 + (w − 1)·gt
+                w = 1.0 + (args.mask_pos_weight - 1.0) * gt
+                mask_l = F.binary_cross_entropy(dyn_mask.clamp(1e-6, 1 - 1e-6), gt, weight=w)
                 loss = loss + args.mask_weight * mask_l
             # régularisation optionnelle : évite un masque qui sature
             if args.mask_l1 > 0:
@@ -479,6 +481,8 @@ if __name__ == "__main__":
     p.add_argument('--motion_window_s', type=float, default=0.2,
                    help="fenêtre temporelle du mode frame, en secondes")
     p.add_argument('--mask_weight', type=float, default=1.0, help='poids loss masque (supervisée ou auto-sup.)')
+    p.add_argument('--mask_pos_weight', type=float, default=1.0,
+                   help='M2 : poids des patches dynamiques dans la BCE (1 = stage, cf. T7)')
     # M3 auto-supervisé (sans GT) : masque supervisé par le résidu de la DBA
     p.add_argument('--selfsup', action='store_true',
                    help='M3 : supervise le masque par le résidu DBA (incohérence rigide), sans GT')

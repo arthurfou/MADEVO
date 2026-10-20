@@ -39,11 +39,12 @@ data:
   nb_time_bins: 5
   patch_size: 4
   mask_thicken_radius: 3
-  # Définition de « dynamique » dans le masque GT (cf. TASKS.md T7) :
-  # all = tous les objets annotés par VICON (comportement du stage, ablation),
-  # sequence = objets mobiles quelque part dans la séquence, frame = autour de t.
-  mask_motion: all
-  motion_thresh_m: 0.02
+  # Définition de « dynamique » dans le masque GT, choisie en T7 sur le split train
+  # (docs/mask_motion.md) : un objet est dynamique à l'instant t s'il s'écarte de plus
+  # de 1 cm de sa position médiane dans la fenêtre [t − 0,1 s, t + 0,1 s].
+  # L'ablation `all` (définition du stage) est configs/ms/v4_evimo2_all.yaml.
+  mask_motion: frame
+  motion_thresh_m: 0.01
   motion_window_s: 0.2
 
 model:
@@ -58,7 +59,7 @@ training:
   weight_decay: 1.0e-4
   use_scheduler: true
   loss: bce_dice
-  loss_pos_weight: 10.0
+  loss_pos_weight: 7.0   # ≈ √(neg/pos) = √49 en mode frame sur le split train (T7)
   images_every: 1      # voxels / masque prédit / masque GT sur wandb tous les N epochs
   num_workers: 4
 

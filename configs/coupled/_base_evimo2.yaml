@@ -5,8 +5,8 @@
 data:
   root: datasets/evimo2/samsung_mono      # racine de la caméra, pas datasets/evimo2
   mask_thicken_radius: 3
-  mask_motion: all                        # doit valoir le mode de l'entraînement MS (T7)
-  motion_thresh_m: 0.02
+  mask_motion: frame                      # doit valoir le mode de l'entraînement MS (T7)
+  motion_thresh_m: 0.01
   motion_window_s: 0.2
 
 devo:
@@ -21,6 +21,7 @@ loss:
   mode: supervised                        # supervised (M2) | selfsup (M3)
   selfsup_k: 3.0
   mask_weight: 1.0
+  mask_pos_weight: 7.0                    # M2 : même pondération que le MS (T7)
   soft_prior_beta: 0.0                    # 0.5 pour les variantes scratch
   soft_prior_target: 0.1
 
