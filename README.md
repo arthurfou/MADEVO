@@ -1,185 +1,276 @@
-<h1 align="center">Deep Event Visual Odometry</h1>
-Fork Arthur modified2
+<h1 align="center">MADEVO — Motion-Aware Deep Event Visual Odometry</h1>
+
 <p align="center">
-    <a href="https://vision.in.tum.de/members/klenk">Simon Klenk</a><sup>1,2*</sup> &emsp;&emsp;
-    <a href="https://motzet.github.io">Marvin Motzet</a><sup>1,2*</sup> &emsp;&emsp;
-    <a href="https://lukaskoestler.com">Lukas Koestler</a><sup>1,2</sup> &emsp;&emsp;
-    <a href="https://vision.in.tum.de/members/cremers">Daniel Cremers</a><sup>1,2</sup>
+  Arthur Fournier — research internship at IPAL (CNRS / NUS), Singapore, 2026
 </p>
 
 <p align="center">
-    <sup>*</sup>equal contribution
+  <a href="#method"><strong>Method</strong></a> |
+  <a href="#setup"><strong>Setup</strong></a> |
+  <a href="#running-experiments"><strong>Running experiments</strong></a> |
+  <a href="#results"><strong>Results</strong></a> |
+  <a href="#what-changed-in-devo"><strong>What changed in DEVO</strong></a> |
+  <a href="#citation"><strong>Citation</strong></a>
 </p>
+
+> **Status: work in progress.** The code base has been rebuilt and audited after the
+> internship. Every number from the internship report is being re-run (several evaluation
+> bugs were found and fixed, see [Limitations](#limitations-and-known-issues)), so this
+> README does not report results yet.
+
+Learned event-based visual odometry assumes a **static scene**. In
+[DEVO](https://github.com/tum-vision/DEVO) (Klenk et al., 3DV 2024), the differentiable
+bundle adjustment reprojects every tracked patch under a single camera motion, so events
+fired by independently moving objects pull the trajectory off. That is a problem for the
+application this work targets: an event-camera-only drone or robot guiding visually impaired
+people through spaces full of pedestrians.
+
+MADEVO adds a **motion segmentation** module to DEVO, in the spirit of DynaSLAM but inside a
+learned event-only VO. A causal ConvLSTM predicts, from event voxel grids, a per-cell
+"dynamic" score at the resolution of DEVO's patch score map (H/4 × W/4). The score keeps
+patches off moving objects and down-weights them in the bundle adjustment. The segmenter
+can be trained on its own, jointly with DEVO under ground-truth masks, or **jointly with
+DEVO without any mask annotation**, using the bundle adjustment residuals as supervision.
+
+## Method
+
+```mermaid
+flowchart LR
+    E[events] --> V[voxel grids<br/>5 bins]
+    V --> MS[motion segmentation<br/>ConvLSTM, causal]
+    V --> S[DEVO patch<br/>score map]
+    MS -- "dynamic score s ∈ [0,1]<br/>(H/4 × W/4)" --> X(("× (1 − s)"))
+    S --> X
+    X --> P[patch selection<br/>P patches / frame]
+    P --> U[recurrent update<br/>operator]
+    U --> BA["differentiable BA<br/>weights ω · (1 − s)"]
+    MS -. "per-patch s<br/>(coupled training)" .-> BA
+    BA --> T[poses, depths]
+```
+
+The dynamic score enters DEVO at two points:
+
+1. **Patch selection.** The score map is multiplied by `1 − s` before patches are sampled,
+   so cells on moving objects are rarely selected (`devo/enet.py`, `Patchifier`). This is
+   the only injection point at inference, for every method below.
+2. **Bundle adjustment.** During coupled training, `s` is sampled at each patch centre and
+   scales the confidence weights `ω` of the differentiable BA by `1 − s` (`devo/ba.py`).
+   The pose loss therefore back-propagates into the segmentation network.
+
+With no score (`dyn_score=None`), DEVO behaves exactly as upstream.
+
+| Milestone | Method | Segmenter training signal | Config |
+|---|---|---|---|
+| M0 | DEVO + **oracle** mask (upper bound) | — (ground-truth mask injected) | `configs/eval/evimo2.yaml`, method `oracle` |
+| M1 | **Decoupled**: segmenter trained alone, DEVO untouched | GT masks | `configs/ms/v4_evimo2.yaml` |
+| M2 | **Coupled, supervised**: segmenter + DEVO trained jointly | pose loss + GT masks | `configs/coupled/m2_evimo2.yaml` |
+| M3 | **Coupled, self-supervised** | pose loss + BA residuals (patches above median + 3·MAD are labelled dynamic) | `configs/coupled/m3_evimo2.yaml` |
+
+All methods start from the official DEVO weights. Coupled runs train for 40k steps, with
+DEVO frozen for the first 10k. Each configuration is trained and evaluated with 5 seeds.
+
+### What counts as "dynamic" on EVIMO2
 
 <p align="center">
-    <sup>1</sup>Technical University of Munich (TUM) &emsp;&emsp;
-    <sup>2</sup>Munich Center for Machine Learning (MCML)
+  <img width="100%" src="assets/mask_definition.png"
+       alt="Events, the raw EVIMO2 mask and the motion-filtered target on scene13_dyn_test_00">
 </p>
 
-<p align="center">
-    International Conference on 3D Vision (3DV) 2024, Davos, CH
-</p>
+[EVIMO2](https://better-flow.github.io/evimo/) masks segment **every object tracked by
+VICON**, static decor included: on the training split, 61 % of the score-map cells are
+"dynamic" under the raw mask (`mask != 0`), but only 2 % belong to an object that is
+actually moving at that instant. Training on the raw mask teaches the network to recognise
+annotated objects rather than motion, and makes the "oracle" hide mostly static scenery.
 
+MADEVO rebuilds each object's world trajectory from the VICON poses
+(`ms_model/motion.py`) and labels an object dynamic at time *t* only if it moves more than
+1 cm from its median position within a 0.2 s window around *t*. The choice of mode, threshold,
+window and loss weighting, measured on the training split, is documented in
+[`docs/mask_motion.md`](docs/mask_motion.md). The raw-mask definition used during the
+internship is kept as an ablation (`configs/*/*_all.yaml`).
 
-<p align="center">
-    <a href="https://www.youtube.com/watch?v=rP_OuOE-O34">
-        <img src="./assets/devo-youtube.png" alt="DEVO" width="600px"/>
-    </a>
-   <br>
-</p>
-
-
-<p align="center">
-    <a href="https://arxiv.org/abs/2312.09800"><strong>Paper (arXiv)</strong></a> |
-    <a href="https://www.youtube.com/watch?v=rP_OuOE-O34"><strong>Video</strong></a> |
-    <a href="https://drive.google.com/file/d/1-u_rW03HvtYhjPT6pm1JBhTTPWxGdVWP/view?usp=sharing"><strong>Poster</strong></a> |
-    <a href="#citation"><strong>BibTeX</strong></a>
-</p>
-
-
-## Abstract
-Event cameras offer the exciting possibility of tracking the camera's pose during high-speed motion and in adverse lighting conditions. Despite this promise, existing event-based monocular visual odometry (VO) approaches demonstrate limited performance on recent benchmarks. To address this limitation, some methods resort to additional sensors such as IMUs, stereo event cameras, or frame-based cameras. Nonetheless, these additional sensors limit the application of event cameras in real-world devices since they increase cost and complicate system requirements. Moreover, relying on a frame-based camera makes the system susceptible to motion blur and HDR. To remove the dependency on additional sensors and to push the limits of using only a single event camera, we present **Deep Event VO (DEVO), the first monocular event-only system with strong performance on a large number of real-world benchmarks**. DEVO sparsely tracks selected event patches over time. A key component of DEVO is a novel deep patch selection mechanism tailored to event data. We significantly decrease the pose tracking error on seven real-world benchmarks by up to 97% compared to event-only methods and often surpass or are close to stereo or inertial methods.
-
-
-## Overview
-<p align="center">
-  <img width="90%" src="assets/devo.svg">
-</p>
-
-During training, DEVO takes event voxel grids $`\{\mathbf{E}_t\}_{t=1}^N`$, inverse depths $`\{\mathbf{d}_t\}_{t=1}^N`$, and camera poses $`\{\mathbf{T}_t\}_{t=1}^N`$ of a sequence of size $N$ as input.
-DEVO estimates poses $`\{\hat{\mathbf{T}}_t\}_{t=1}^N`$ and depths $`\{\hat{\mathbf{d}}_t\}_{t=1}^N`$ of the sequence.
-Our novel patch selection network predicts a score map $\mathbf{S}_t$ to highlight optimal 2D coordinates $\mathbf{P}_t$ for optical flow and pose estimation.
-A recurrent update operator iteratively refines the sparse patch-based optical flow $\hat{\mathbf{f}}$ between event grids by predicting $\Delta\hat{\mathbf{f}}$ and updates poses and depths through a differentiable bundle adjustment (DBA) layer, weighted by $\omega$, for each revision.
-Ground truth optical flow $\mathbf{f}$ for supervision is computed using poses and depth maps. At inference, DEVO samples from a multinomial distribution based on the pooled score map $\mathbf{S}_t$.
-
+The figure is produced by `scripts/plot_mask_definition.py` from EVIMO2 data.
 
 ## Setup
 
-Testé sur Ubuntu 22.04 / WSL2 avec Python 3.11, torch 2.4 et CUDA 11.8. L'environnement
-est géré par conda (Miniforge, mamba ou micromamba conviennent), et `devo` comme
-`ms_model` s'installent en une seule commande.
+Tested on Ubuntu 22.04 / WSL2 with Python 3.11, PyTorch 2.4.1 and CUDA 11.8. A single conda
+environment, `madevo`, installs `devo`, `ms_model` and `utils` in one command.
 
 ```bash
 git clone https://github.com/arthurfou/MADEVO.git
 cd MADEVO
 ```
 
-### Serveur GPU (entraînement et évaluation)
+### GPU machine (training and evaluation)
 
-`environment.yml` fournit torch 2.4.1+cu118 (couvre Pascal `sm_61` → Hopper `sm_90`) et la
-chaîne de compilation des trois extensions CUDA héritées de DPVO (`cuda_corr`, `cuda_ba`,
-`lietorch_backends`), ainsi que les en-têtes Eigen 3.4.
+`environment.yml` provides PyTorch 2.4.1+cu118 (Pascal `sm_61` to Hopper `sm_90`), the
+toolchain for the three CUDA extensions inherited from DPVO (`cuda_corr`, `cuda_ba`,
+`lietorch_backends`) and the Eigen 3.4 headers.
 
 ```bash
-mamba env create -f environment.yml      # ou: conda env create -f environment.yml
+mamba env create -f environment.yml      # or: conda env create -f environment.yml
 conda activate madevo
 pip install -e . --no-build-isolation
 ```
 
-- `--no-build-isolation` est obligatoire : la compilation des extensions importe `torch`,
-  que l'isolation PEP 517 cacherait.
-- Sur un nœud de login sans GPU visible, la détection d'architecture échoue : préciser
-  les cibles, par exemple `TORCH_CUDA_ARCH_LIST="8.0;8.6;9.0" pip install -e . --no-build-isolation`.
-- Si Eigen n'est pas fourni par l'environnement : `bash scripts/download/download_eigen.sh`
-  (ou poser `EIGEN_INCLUDE_DIR` vers un Eigen 3.4 existant).
-
-Vérification :
+- `--no-build-isolation` is required: building the extensions imports `torch`.
+- On a login node without a visible GPU, set the target architectures explicitly, e.g.
+  `TORCH_CUDA_ARCH_LIST="8.0;8.6;9.0" pip install -e . --no-build-isolation`.
+- If Eigen is not available: `bash scripts/download/download_eigen.sh`, or set
+  `EIGEN_INCLUDE_DIR` to an existing Eigen 3.4.
 
 ```bash
 python -c "import cuda_ba, cuda_corr, lietorch_backends; print('extensions OK')"
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-### Machine locale sans GPU (développement, tests CPU, `--dry-run`)
+### CPU-only machine (development, tests, dry runs)
 
-Même nom d'environnement, torch CPU, et les extensions CUDA sont sautées via
-`MADEVO_SKIP_CUDA_EXT` : tout ce qui fait tourner DEVO reste réservé aux serveurs GPU.
+Same environment name, CPU PyTorch, CUDA extensions skipped. Everything that runs DEVO
+itself still needs a GPU.
 
 ```bash
 mamba env create -f environment-cpu.yml
 conda activate madevo
 MADEVO_SKIP_CUDA_EXT=1 pip install -e . --no-build-isolation
+pytest                                    # ~130 tests, a few seconds, no dataset needed
 ```
 
-Vérification :
+### Weights and data
 
 ```bash
-python -c "import ms_model, devo; from rosbags.typesys import Stores; print('import OK')"
-pytest
+bash scripts/download/download_devo_weights.sh   # pretrained/DEVO.pth (~40 MB)
+bash scripts/download/download_evimo2.sh         # datasets/evimo2/ (~2.4 GB + preprocessing)
 ```
 
-### Poids pré-entraînés et données
+`datasets/` and `pretrained/` are git-ignored. Set `MADEVO_DATASETS` / `MADEVO_PRETRAINED`
+to store them elsewhere. Details and the resulting layout:
+[`scripts/download/README.md`](scripts/download/README.md).
+
+## Running experiments
+
+One **job** is one run with one seed (`jobs/*.sh`). Launchers run a job over several seeds,
+in tmux sessions or as a Slurm array. Hyper-parameters live in YAML (`configs/`) and can be
+overridden with `--set key=value`. `--dry-run` resolves everything and prints the commands
+without running anything.
 
 ```bash
-bash scripts/download/download_devo_weights.sh   # pretrained/DEVO.pth (~40 Mo)
-bash scripts/download/download_evimo2.sh         # datasets/evimo2/ (téléchargement + prétraitement)
+# 1. motion segmentation alone (M1, and initialisation of M2/M3), 5 seeds
+launch/tmux.sh --seeds 1-5 jobs/train_ms.sh configs/ms/v4_evimo2.yaml
+
+# 2. coupled training, each seed initialised from the MS run of the same seed
+launch/tmux.sh --seeds 1-5 jobs/train_coupled.sh configs/coupled/m2_evimo2.yaml
+launch/tmux.sh --seeds 1-5 jobs/train_coupled.sh configs/coupled/m3_evimo2.yaml
+
+# 3. central table (vanilla, oracle, M1, M2, M3) on the 8 EVIMO2 eval sequences
+launch/tmux.sh --seeds 1-5 jobs/eval_table.sh configs/eval/evimo2.yaml
+
+# 4. mean ± std over seeds
+python tools/aggregate_seeds.py evals_out/evimo2/evimo2/<launch_id>
 ```
 
-### Only for Training
-*The following steps are only needed if you intend to (re)train DEVO. Please note, the training data have the size of about 1.1TB (rbg: 300GB, evs: 370GB).*
+Same jobs on a Slurm cluster: `launch/slurm.sh --profile gpu_train --seeds 1-5 jobs/...`
+(profiles in `launch/profiles/`). Runs resume automatically from their last checkpoint.
 
-*Otherwise, skip it and go to [here](#only-for-evalution).*
+- **Outputs**: `runs/<exp>/<launch_id>/seed<N>/` (resolved config, command, git state,
+  checkpoints, logs) and `evals_out/<dataset>/<sources>/<launch_id>/seed<N>/`. Each table
+  comes with a `manifest.yaml` that records the exact checkpoint behind every row.
+- **Consistency guard**: the evaluation refuses to compare an oracle and a trained model
+  that use different definitions of the dynamic mask.
+- **Ablations**: model capacity (`*_large.yaml`), coupled training from scratch
+  (`*_scratch.yaml`), raw EVIMO2 masks (`*_all.yaml`, with `configs/eval/evimo2_all.yaml`).
+- **Logging**: all jobs log to [Weights & Biases](https://wandb.ai). Without an account, run
+  with `WANDB_MODE=offline`. Copy `paths.env.example` to `paths.env` to set the project,
+  entity and output locations.
+- **CPU smoke test**: `jobs/train_ms.sh configs/ms/smoke.yaml` trains the segmenter for 2
+  epochs on one sequence.
 
-First, download all RGB images and depth maps of [TartanAir](https://theairlab.org/tartanair-dataset/) from the left camera (~500GB) to `<TARTANPATH>`
+## Results
+
+To be filled in once the evaluation campaign is complete: mean ± std over 5 seeds of the
+absolute trajectory error on the 8 EVIMO2 `imo/eval` sequences.
+
+| Method | ATE ↓ | Δ vs DEVO |
+|---|---|---|
+| DEVO (vanilla) | — | — |
+| M0 oracle mask | — | — |
+| M1 decoupled | — | — |
+| M2 coupled, supervised | — | — |
+| M3 coupled, self-supervised | — | — |
+
+The figures in the internship report are **not** valid and should not be quoted: they are
+affected by the bugs listed below and use the raw EVIMO2 mask definition.
+
+## Limitations and known issues
+
+- **Mask definition.** The ground-truth "dynamic" label is derived from VICON trajectories
+  (see above), not annotated by hand. At the chosen threshold, 66 % of the training frames
+  contain no moving object.
+- **Single dataset.** Training and evaluation use EVIMO2 (`samsung_mono`, `imo`) only.
+  Cross-dataset evaluation is postponed.
+- **Validation split.** The segmenter's best checkpoint (`best_iou.pt`) is currently
+  selected on the evaluation sequences. A validation split carved from the training
+  sequences is planned.
+- **Fixed evaluation bugs** (they affect the internship numbers, not this code): the
+  resolution of converted EVIMO2 files was read as 260 × 346 instead of 480 × 640, the mean
+  ATE also averaged two aggregate keys, and the converted evaluation masks were paired with
+  the wrong timestamps across VICON tracking gaps (33 % of them).
+- The CUDA extensions build with PyTorch 2.4, but a full GPU run with this environment
+  (DEVO forward, BA, VO evaluation) is still being validated.
+
+## Repository structure
+
+```
+devo/            DEVO (upstream), with the two injection points (enet.py, ba.py, devo.py)
+ms_model/        motion segmentation: ConvLSTM, EVIMO datasets, motion filter, mask providers
+train_coupled.py joint training of the segmenter and DEVO (M2, M3)
+evals/           unified evaluation (eval_table.py) and EVIMO2 mask providers
+configs/         YAML configs: ms/, coupled/, eval/ (config/ holds DEVO's VO parameters)
+jobs/ launch/    one job = one run = one seed; tmux and Slurm launchers
+tools/           config resolution, seed aggregation, mask statistics
+scripts/         downloads, preprocessing, figures
+docs/            design notes (definition of the dynamic mask)
+tests/           CPU tests on synthetic EVIMO sequences
+```
+
+`train.py` (DEVO training on TartanAir) and the per-dataset scripts in `evals/eval_evs/`
+come from upstream DEVO. They are kept for completeness but not used here: every
+experiment starts from the official DEVO weights. See the
+[upstream README](https://github.com/tum-vision/DEVO#readme) to retrain DEVO itself.
+
+## What changed in DEVO
+
+The repository history starts with DEVO exactly as released upstream (commit `db22f2b` =
+[tum-vision/DEVO@93801a4](https://github.com/tum-vision/DEVO/tree/93801a4)). To see every
+change made to DEVO's core:
+
 ```bash
-python thirdparty/tartanair_tools/download_training.py --output-dir <TARTANPATH> --rgb --depth --only-left
+git diff db22f2b -- devo/
 ```
 
-Next, generate event voxel grids using [vid2e](https://github.com/uzh-rpg/rpg_vid2e).
-```bash
-python scripts/convert_tartan.py --dirsfile <path to .txt file>
-```
-`dirsfile` expects a .txt file containing line-separated paths to dirs with .png images (to generate events for these images).
+Seven files differ:
+- three carry the method: `enet.py` (score-map injection, per-patch sampling of the mask,
+  BA residuals for M3), `ba.py` (confidence weighting) and `devo.py` (inference hook);
+- four are a mechanical port of the CUDA extensions to PyTorch 2.x (`THC` header,
+  `scalar_type()` in the dispatch macros).
 
-
-### Only for Evalution
-We provide a pretrained model for our simulated event data.
-
-```bash
-# download model (~40MB)
-./download_model.sh
-```
-
-#### Data Preprocessing
-We evaluate DEVO on seven real-world event-based datasets ([FPV](https://fpv.ifi.uzh.ch/), [VECtor](https://star-datasets.github.io/vector/), [HKU](https://github.com/arclab-hku/Event_based_VO-VIO-SLAM?tab=readme-ov-file#data-sequence), [EDS](https://rpg.ifi.uzh.ch/eds.html), [RPG](https://rpg.ifi.uzh.ch/ECCV18_stereo_davis.html), [MVSEC](https://daniilidis-group.github.io/mvsec/), [TUM-VIE](https://cvg.cit.tum.de/data/datasets/visual-inertial-event-dataset)). We provide scripts for data preprocessing (undist, ...).
-
-Check `scripts/pp_DATASETNAME.py` for the way to preprocess the original datasets. This will create the necessary files for you, e.g. `rectify_map.h5`, `calib_undist.json` and `t_offset_us.txt`.  
-
-
-## Training
-Make sure you have run the [following steps](#only-for-training). Your dataset directory structure should look as follows
-
-```
-├── <TARTANPATH>
-    ├── abandonedfactory
-    ├── abandonedfactory_night
-    ├── ...
-    ├── westerndesert
-```
-
-To train DEVO with the default configuration, run
-```bash
-python train.py -c="config/DEVO_base.conf" --name=<your name>
-```
-
-The log files will be written to `runs/<your name>`. Please, check [`train.py`](train.py) for more options.
-
-## Evaluation
-Make sure you have run the [following steps](#only-for-evalution) (downloading pretrained model, data and preprocessing data).
-
-```bash
-python evals/eval_evs/eval_DATASETNAME_evs.py --datapath=<DATASETPATH> --weights="DEVO.pth" --stride=1 --trials=1 --expname=<your name>
-```
-
-The qualitative and quantitative results will be written to `results/DATASETNAME/<your name>`. Check [`eval_rpg_evs.py`](evals/eval_evs/eval_rpg_evs.py) for more options.
-
-## News
-- [x] Code and model are released.
-- [x] Code for simulation is released.
-
+Everything else (motion segmentation, coupled training, evaluation, jobs) lives outside
+`devo/`.
 
 ## Citation
-If you find our work useful, please cite our paper:
+
+There is no paper yet. To cite the code:
+
+```bib
+@misc{fournier2026madevo,
+  title        = {{MADEVO}: Motion-Aware Deep Event Visual Odometry},
+  author       = {Fournier, Arthur},
+  year         = {2026},
+  howpublished = {\url{https://github.com/arthurfou/MADEVO}},
+}
+```
+
+Please also cite DEVO and DPVO, on which this work is built:
 
 ```bib
 @inproceedings{klenk2023devo,
@@ -191,18 +282,26 @@ If you find our work useful, please cite our paper:
   publisher = {{IEEE}},
   year      = {2024},
 }
+
+@inproceedings{teed2023dpvo,
+  title     = {Deep Patch Visual Odometry},
+  author    = {Teed, Zachary and Lipson, Lahav and Deng, Jia},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2023},
+}
 ```
 
+## Acknowledgments and license
 
-## Acknowledgments
-We thank the authors of the following repositories for publicly releasing their work:
+This repository is a fork of [DEVO](https://github.com/tum-vision/DEVO) (TUM Computer Vision
+Group), itself built on [DPVO](https://github.com/princeton-vl/DPVO) (Princeton Vision &
+Learning Lab). Both are released under the MIT license, and so is this work: see
+[`LICENSE`](LICENSE), which keeps the original copyright alongside ours. EVIMO2 is described
+in Burner et al., *EVIMO2: An Event Camera Dataset for Motion Segmentation, Optical Flow,
+Structure from Motion, and Visual Inertial Odometry in Indoor Scenes with Monocular or Stereo
+Algorithms* (2022).
 
-- [DPVO](https://github.com/princeton-vl/DPVO)
-- [TartanAir](https://github.com/castacks/tartanair_tools)
-- [vid2e](https://github.com/uzh-rpg/rpg_vid2e)
-- [E2Calib](https://github.com/uzh-rpg/e2calib)
-- [rpg_trajectory_evaluation](https://github.com/uzh-rpg/rpg_trajectory_evaluation)
-- [Event-based Vision for VO/VIO/SLAM in Robotics](https://github.com/arclab-hku/Event_based_VO-VIO-SLAM)
-
-This work was supported by the ERC Advanced Grant [SIMULACRON](https://cordis.europa.eu/project/id/884679).
-
+Thanks to the authors of DEVO, DPVO, EVIMO and the tools DEVO builds on
+([TartanAir](https://github.com/castacks/tartanair_tools),
+[vid2e](https://github.com/uzh-rpg/rpg_vid2e), [E2Calib](https://github.com/uzh-rpg/e2calib),
+[rpg_trajectory_evaluation](https://github.com/uzh-rpg/rpg_trajectory_evaluation)).
