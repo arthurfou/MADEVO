@@ -29,8 +29,11 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
+
+from ms_model.io.loaders import _evimo2_gt_frames, load_evimo_mask
 
 
 def convert_sequence(src_dir: str, dst_path: str, verbose: bool = True) -> None:
@@ -47,45 +50,32 @@ def convert_sequence(src_dir: str, dst_path: str, verbose: bool = True) -> None:
     events[:, 2] = ev_xy[:, 1].astype(np.float32)  # y
     events[:, 3] = ev_p.astype(np.float32)    # polarity
 
-    # ── Info (K, index, meta) ────────────────────────────────────────────────
+    # ── Info (K, meta) ───────────────────────────────────────────────────────
     fi   = np.load(os.path.join(src_dir, "dataset_info.npz"), allow_pickle=True)
     K    = fi["K"].astype(np.float64)           # (3,3)
-    idx  = fi["index"].astype(np.int64)         # (N_frames,)
-    meta = fi["meta"].item()                    # dict: frames, full_trajectory, imu, meta
-    frames = meta["frames"]                     # list of dicts
+
+    # ── Masques, depth et frames : alignés sur les frames possédant une GT ──
+    # EVIMO2 laisse des trous (tracking VICON perdu) : la frame reste dans meta["frames"]
+    # mais n'a ni masque ni depth. Le i-ème masque va donc avec la i-ème frame **avec GT**,
+    # pas avec frames[i] — l'ancienne version de ce script faisait ce second appariement et
+    # datait faux 33 % des masques des séquences d'éval (cf. INTEGRITY_CHECK.md, bug 6).
+    frames = _evimo2_gt_frames(Path(src_dir))
+    fm = load_evimo_mask(src_dir)               # même alignement que l'entraînement
+    mask_arr = fm.masks.astype(np.uint16)
     N_frames = len(frames)
 
-    # ── Masks ────────────────────────────────────────────────────────────────
-    fm = np.load(os.path.join(src_dir, "dataset_mask.npz"), allow_pickle=True)
-    mask_keys = sorted(fm.keys())
-    N_masks = len(mask_keys)
-    if N_masks != N_frames:
-        # Prendre le min pour la robustesse
-        N_frames = min(N_frames, N_masks)
-    sample_mask = fm[mask_keys[0]]
-    H, W = sample_mask.shape
-    mask_arr = np.empty((N_frames, H, W), dtype=np.uint16)
-    for i in range(N_frames):
-        mask_arr[i] = fm[mask_keys[i]]
-
-    # ── Depth ────────────────────────────────────────────────────────────────
     fd = np.load(os.path.join(src_dir, "dataset_depth.npz"), allow_pickle=True)
-    depth_keys = sorted(fd.keys())
-    N_depth = len(depth_keys)
-    N_frames = min(N_frames, N_depth)
-    depth_arr = np.empty((N_frames, H, W), dtype=np.uint16)
-    for i in range(N_frames):
-        depth_arr[i] = fd[depth_keys[i]]
+    depth_keys = sorted(fd.files, key=lambda k: int(k.split("_")[-1]))
+    if len(depth_keys) != N_frames:
+        raise ValueError(f"{src_dir}: {len(depth_keys)} depth pour {N_frames} frames avec GT")
+    depth_arr = np.stack([fd[k] for k in depth_keys]).astype(np.uint16)
 
-    # ── Cohérence index ──────────────────────────────────────────────────────
-    idx = idx[:N_frames]
+    # `index` d'EVIMO2 est une table de lookup sur une grille de 10 ms, pas un index par
+    # frame : on le recalcule (premier event de chaque frame), comme en EVIMO1.
+    idx = np.searchsorted(ev_t, fm.ts, side="left").astype(np.int64)
 
-    # ── Build meta compatible EVIMO1 ─────────────────────────────────────────
-    # On conserve la structure frames telle quelle (cam.pos.q/t déjà présents)
-    # EvimoClipDataset lit frames[i]['ts'], frames[i]['cam']['pos']['q'/'t']
-    meta_out = {"frames": frames[:N_frames]}
+    meta_out = {"frames": frames}
 
-    # ── Sauvegarde ───────────────────────────────────────────────────────────
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
     np.savez_compressed(
         dst_path,
