@@ -30,7 +30,9 @@ DRY_RUN=0
 JOB=""
 JOB_ARGS=()
 
+# Tout ce qui suit le job (config, --set …) lui revient, options comprises.
 while (( $# )); do
+    if [[ -n "$JOB" ]]; then JOB_ARGS+=("$1"); shift; continue; fi
     case "$1" in
         -h|--help)  usage; exit 0 ;;
         --profile)  PROFILE="${2:?}"; shift 2 ;;
@@ -39,7 +41,7 @@ while (( $# )); do
         --resume)   LAUNCH_ID="${2:?}"; RESUME=1; shift 2 ;;
         --dry-run)  DRY_RUN=1; shift ;;
         -*)         die "option inconnue : $1" ;;
-        *)          if [[ -z "$JOB" ]]; then JOB="$1"; else JOB_ARGS+=("$1"); fi; shift ;;
+        *)          JOB="$1"; shift ;;
     esac
 done
 
