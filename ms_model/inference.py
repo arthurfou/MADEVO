@@ -13,6 +13,15 @@ from ms_model.representations.voxel import make_voxel_sequence
 from ms_model.viz.render import render_event_frame
 
 
+def load_config(config_path: str | Path) -> dict:
+    """YAML d'entraînement MS, avec l'héritage `extends:` des configs du monorepo."""
+    try:
+        from utils.run_utils import resolve_config
+    except ImportError:  # ms_model utilisé hors du monorepo : configs à plat
+        return yaml.safe_load(Path(config_path).read_text())
+    return resolve_config(config_path)
+
+
 def load_model_from_checkpoint(
     weights_path: str | Path, config_path: str | Path, device: torch.device
 ) -> tuple[torch.nn.Module, dict]:
@@ -21,7 +30,7 @@ def load_model_from_checkpoint(
     Retourne le modèle (en mode eval, sur `device`) et le `data_cfg` du yaml
     (utile pour reconstruire les datasets avec les mêmes paramètres).
     """
-    cfg = yaml.safe_load(Path(config_path).read_text())
+    cfg = load_config(config_path)
     data_cfg = cfg["data"]
     model_cfg = dict(cfg["model"])
     model_name = model_cfg.pop("name")

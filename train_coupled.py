@@ -80,9 +80,9 @@ def build_ms_model(ms_weights, ms_config, device):
 
     ms_weights=None → initialisation aléatoire (scratch training).
     """
-    import yaml
     from ms_model.models import build_model
-    cfg = yaml.safe_load(open(ms_config))
+    from utils.run_utils import resolve_config
+    cfg = resolve_config(ms_config)          # suit `extends:` comme les jobs
     data_cfg = cfg["data"]
     model_cfg = dict(cfg["model"])
     model_name = model_cfg.pop("name")
@@ -242,11 +242,11 @@ def log_coupled_images(logger, step, images, dyn_mask, gt_dyn, dyn_patch_scores,
 def build_dataset(args):
     """Construit le dataset d'entraînement (tartan_evs statique, ou EVIMO dynamique pour M2)."""
     if args.dataset == "evimo":
-        import yaml
         from ms_model.data.evimo_clip_dataset import EvimoClipDataset
+        from utils.run_utils import resolve_config
         seqs = args.evimo_seqs
         if not seqs:  # à défaut, réutilise le split train du yaml MS
-            data_cfg = yaml.safe_load(open(args.ms_config))["data"]
+            data_cfg = resolve_config(args.ms_config)["data"]
             seqs = data_cfg["train_sequences"]
         # Les séquences du yaml MS sont relatives à la racine de la caméra, p. ex.
         # « imo/train/scene10_dyn_train_00_000000 » : --datapath doit donc valoir
