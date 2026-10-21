@@ -1,6 +1,6 @@
 # Séquences statiques SfM d'EVIMO2 — faux positifs du MS (piste T14)
 
-**État : outillage en place, rien de mesuré.** Cette note décrit le problème, ce qui est déjà
+**État : outillage en place, catégorie mesurée (21/10), aucun entraînement lancé.** Cette note décrit le problème, ce qui est déjà
 branché dans le code, et ce qu'il reste à faire. À ne pas confondre avec une décision prise :
 la campagne du papier (T11) s'entraîne sur la seule catégorie **IMO**, comme le stage.
 
@@ -24,13 +24,32 @@ C'est gênant à deux endroits :
 ## Ce que la catégorie SfM apporte
 
 EVIMO2 v2 publie, pour la même caméra `samsung_mono`, une catégorie **`sfm`** : scènes où
-**seule la caméra bouge**, sans objet mobile. Le masque GT « dynamique » y est donc vide,
-quel que soit le mode de `mask_motion` (`all`, `sequence`, `frame`) — ce sont des exemples
-**entièrement négatifs**, dans le même domaine capteur que l'entraînement (même caméra, même
-résolution, mêmes conditions d'éclairage, même prétraitement).
+seule la caméra est censée bouger. Même domaine capteur que l'entraînement (même caméra,
+même résolution, même prétraitement), et aucune annotation nouvelle à produire.
 
-C'est exactement le signal qui manque, et il ne demande ni nouvelle annotation ni nouveau
-capteur.
+⚠️ **Ces séquences ne sont des exemples négatifs qu'en mode `frame`.** Mesuré le 21/10 sur
+les 35 séquences de `sfm/train` (`tools/mask_motion_stats.py`, tables complètes dans
+[`mask_motion_stats_sfm_train.md`](mask_motion_stats_sfm_train.md)) :
+
+| mode | cellules positives | frames sans positif | séquences non vides |
+|---|---|---|---|
+| `all` | **67,4 %** | 0,6 % | 35 / 35 |
+| `sequence`, 1 cm | **8,0 %** | 69,6 % | 11 / 35 |
+| **`frame`, 1 cm, 0,2 s** | **0,11 %** | 99,6 % | 8 / 35 |
+
+En mode `all`, la catégorie SfM est masquée aux deux tiers — c'est du décor annoté par
+VICON, exactement le problème du point 4 d'`INTEGRITY_CHECK.md`, et elle n'apporterait que
+des faux positifs. En mode `sequence`, 11 séquences gardent des objets marqués mobiles
+(jusqu'à 36 % des pixels d'une séquence). Seul le mode **`frame` retenu en T7** en fait de
+vrais négatifs : 0,11 % de cellules positives, 99,6 % des frames entièrement vides.
+
+Le résidu de 0,11 % n'est pas du bruit de mesure : 8 séquences gardent une trace (au plus
+1 % des pixels d'une séquence). La catégorie SfM n'est donc pas *parfaitement* statique, et
+il faut la traiter comme « presque tout négatif », pas comme un zéro garanti.
+
+**Conséquence pour l'ablation `all`** : les configs `*_all.yaml` ne peuvent pas recevoir de
+séquences SfM. L'ablation reproduit le stage, où la question ne se posait pas ; y ajouter
+des scènes masquées aux deux tiers n'aurait aucun sens.
 
 ```bash
 bash scripts/download/download_evimo2.sh --sfm      # ~10,4 Go, en plus de la catégorie IMO
@@ -60,13 +79,24 @@ bash scripts/download/download_evimo2.sh --sfm      # ~10,4 Go, en plus de la ca
 
 ## Ce qu'il reste à faire
 
-1. Télécharger la catégorie SfM et **compter** : combien de séquences train, quelle durée
-   totale par rapport aux 21 séquences IMO.
-2. Choisir la proportion ajoutée. Trop de négatifs et le MS ne prédit plus rien ; les deux
-   garde-fous sont `loss_pos_weight` (7 aujourd'hui, réglé sur 2 % de cellules positives en
-   mode `frame` — l'ajout de séquences tout négatives fait baisser cette part, donc le poids
-   est à **remesurer**, avec `tools/mask_motion_stats.py` sur l'ensemble étendu) et l'IoU de
-   validation, qui reste calculée sur les seules séquences IMO.
+1. ~~Télécharger la catégorie SfM et compter.~~ **Fait le 21/10** : `sfm/train` compte
+   **35 séquences et 28 326 frames GT (8,2 min)**, contre 21 séquences et 9 478 frames
+   (2,7 min) pour `imo/train` — la catégorie SfM pèse **3 fois** l'ensemble d'entraînement
+   actuel. L'ajouter en entier déséquilibrerait donc l'entraînement vers le négatif.
+2. Choisir la proportion ajoutée, et **remesurer `loss_pos_weight` en conséquence** : il
+   vaut 7 aujourd'hui, pour 2,00 % de cellules positives sur `imo/train` seul (cf.
+   [`mask_motion.md`](mask_motion.md)). En supposant l'heuristique de T7 inchangée
+   (`pos_weight ≈ √(neg/pos)`), et SfM à 0,11 % de positifs :
+
+   | ensemble d'entraînement | frames | cellules positives | `loss_pos_weight` |
+   |---|---|---|---|
+   | IMO seul (campagne T11) | 9 478 | 2,00 % | **7** (actuel) |
+   | IMO + SfM à parts égales (~12 séq.) | ~19 000 | ~1,06 % | ~10 |
+   | IMO + tout SfM | 37 804 | ~0,58 % | ~13 |
+
+   Ces valeurs sont des **prévisions arithmétiques**, pas des mesures : à confirmer en
+   relançant `tools/mask_motion_stats.py` sur l'ensemble effectivement retenu. Le second
+   garde-fou est l'IoU de validation, qui reste calculée sur les seules séquences IMO.
 3. Mesurer sur **deux** axes, les deux nécessaires :
    - part de cellules positives prédites sur les scènes SfM (faux positifs : doit tomber) ;
    - IoU de validation sur IMO (doit ne pas bouger).
@@ -86,7 +116,9 @@ généralisation.
   d'`extra_train_sequences` sont relatifs à `data.root`
   (`${MADEVO_DATASETS:-datasets}/evimo2/samsung_mono`), comme ceux de `train_sequences`, et
   commencent donc par `sfm/`, non par `imo/`.
-- `ms_model/motion.py` filtre les masques par mouvement : sur une séquence SfM il n'y a
-  aucun objet à filtrer, le masque est vide avant comme après. Rien à régler de ce côté.
+- `ms_model/motion.py` filtre les masques par mouvement, et c'est **lui** qui rend la
+  catégorie SfM exploitable : sans filtre (mode `all`), ces séquences sont masquées à 67 %.
+  Le mode, le seuil et la fenêtre doivent donc être les mêmes que pour les séquences IMO —
+  ce que `tests/test_eval.py` vérifie déjà sur les configs.
 - Les séquences SfM ne doivent **jamais** entrer dans un split d'éval VO : les tables du
   papier se comparent à des chiffres existants sur `splits/evimo2/evimo2_val.txt`.
