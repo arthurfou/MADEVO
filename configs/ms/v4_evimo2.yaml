@@ -3,7 +3,7 @@
 exp: v4_evimo2
 
 data:
-  root: datasets/evimo2/samsung_mono
+  root: ${MADEVO_DATASETS:-datasets}/evimo2/samsung_mono
   train_sequences:
     # 21 séquences IMO train — chemins de répertoires (format EVIMO2 natif)
     - imo/train/scene10_dyn_train_00_000000

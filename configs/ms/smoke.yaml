@@ -7,7 +7,7 @@
 exp: ms_smoke
 
 data:
-  root: datasets/evimo2/samsung_mono
+  root: ${MADEVO_DATASETS:-datasets}/evimo2/samsung_mono
   train_sequences:
     - imo/eval/scene13_dyn_test_00_000000
   val_sequences:

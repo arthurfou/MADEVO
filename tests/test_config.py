@@ -194,6 +194,29 @@ def test_aucun_chemin_absolu_dans_les_configs():
         assert "/home/" not in text, f"{path} contient un chemin personnel"
 
 
+@pytest.mark.parametrize("path", [p for p in ALL_CONFIGS if p.parent.name in ("ms", "coupled", "eval")],
+                         ids=lambda p: f"{p.parent.name}/{p.stem}")
+def test_donnees_et_poids_suivent_les_variables_demplacement(path, monkeypatch):
+    """`MADEVO_DATASETS` / `MADEVO_PRETRAINED` doivent déplacer données et poids.
+
+    Sur un serveur dont le home a un quota, ces deux variables (paths.env) sont le seul
+    moyen de mettre les datasets ailleurs : une config qui écrirait `datasets/…` en dur les
+    chercherait quand même dans le repo.
+    """
+    monkeypatch.setenv("MADEVO_DATASETS", "/ailleurs/datasets")
+    monkeypatch.setenv("MADEVO_PRETRAINED", "/ailleurs/pretrained")
+    cfg = run_utils.resolve_config(path)
+    checked = 0
+    for section, key in (("dataset", "root"), ("dataset", "mask_root"),
+                         ("data", "root"), ("devo", "weights")):
+        value = cfg.get(section, {}).get(key)
+        if value is None:
+            continue
+        checked += 1
+        assert str(value).startswith("/ailleurs/"), f"{section}.{key} = {value} ignore la variable"
+    assert checked, f"{path} ne désigne ni données ni poids : rien à vérifier"
+
+
 def test_manifest_dune_reference_non_satisfaite_sort_en_code_3(monkeypatch, tmp_path):
     """Code 3 = « l'entraînement évalué n'a pas encore tourné pour cette seed ».
 

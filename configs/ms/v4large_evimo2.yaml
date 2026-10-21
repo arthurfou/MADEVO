@@ -3,7 +3,7 @@
 exp: v4large_evimo2
 
 data:
-  root: datasets/evimo2/samsung_mono
+  root: ${MADEVO_DATASETS:-datasets}/evimo2/samsung_mono
   train_sequences:
     - imo/train/scene10_dyn_train_00_000000
     - imo/train/scene10_dyn_train_01_000000

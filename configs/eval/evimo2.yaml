@@ -7,12 +7,12 @@ exp: eval_evimo2        # group wandb : une expérience, toutes seeds confondues
 
 dataset:
   name: evimo2
-  root: datasets/evimo2/eval_preprocessed      # --datapath (format DEVO)
-  mask_root: datasets/evimo2/evimo1_format     # --mask_root (masques GT)
+  root: ${MADEVO_DATASETS:-datasets}/evimo2/eval_preprocessed      # --datapath (format DEVO)
+  mask_root: ${MADEVO_DATASETS:-datasets}/evimo2/evimo1_format     # --mask_root (masques GT)
   split: splits/evimo2/evimo2_val.txt
 
 devo:
-  weights: pretrained/DEVO.pth
+  weights: ${MADEVO_PRETRAINED:-pretrained}/DEVO.pth
   config: config/eval_evimo.yaml               # hyperparamètres VO de DEVO
 
 methods: [vanilla, oracle, m1, m2, m3]

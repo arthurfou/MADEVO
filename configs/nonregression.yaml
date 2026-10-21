@@ -1,0 +1,21 @@
+# Valeurs de référence pour valider une installation sur un nouveau serveur (T10).
+# Seul DEVO vanilla sert de référence : il ne dépend ni des masques ni des bugs corrigés
+# depuis le stage (cf. INTEGRITY_CHECK.md). ATE en cm, moyenne des scènes.
+#
+# Contrôle : python tools/check_nonregression.py <dossier d'éval seed<N>> --dataset evimo2
+evimo2:
+  source: "INTEGRITY_CHECK.md, table central_table_evimo2 recalculée (bug 2)"
+  vanilla_mean: 2.7507
+  # deux lancements du stage donnent 2,7507 et 2,6744 : ~3 % de dispersion entre runs
+  rel_tolerance: 0.10
+rpg:
+  source: "results.md, Tableau 1 (reproduction DEVO du stage, 6 scènes rapportées)"
+  vanilla_per_scene:
+    bin: 0.842
+    boxes1: 0.915
+    monitor1: 0.549
+    boxes2: 0.965
+    monitor2: 0.718
+    reader: 1.194
+  rel_tolerance: 0.25        # par scène : les petites ATE (< 1 cm) varient vite
+  mean_rel_tolerance: 0.15   # sur la moyenne de ces 6 scènes (0,864 cm)

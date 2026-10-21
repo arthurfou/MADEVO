@@ -1,0 +1,6 @@
+# Checkpoints du smoke GPU (jobs/smoke_gpu.sh) : MS minuscule de configs/ms/smoke.yaml et
+# couplés de quelques centaines de steps. Aucune valeur scientifique.
+ms_arch: configs/ms/smoke.yaml
+m1: {ms: runs/ms_smoke/@latest, ckpt: best_iou.pt}
+m2: {coupled: runs/smoke_m2/@latest}
+m3: {coupled: runs/smoke_m3/@latest}
