@@ -203,7 +203,13 @@ def main():
         print(out_dir_for("eval" if kind == "eval" else "train", cfg, args.launch_id, args.seed))
 
     elif args.command == "manifest":
-        m = manifest(cfg, args.seed)
+        try:
+            m = manifest(cfg, args.seed)
+        except FileNotFoundError as exc:
+            # Même convention que `argv` : une référence d'entraînement non encore
+            # satisfaite n'est pas une erreur de configuration (code 3, cf. jobs/_common.sh).
+            print(f"référence d'entraînement non résolue : {exc}", file=sys.stderr)
+            sys.exit(3)
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(yaml.safe_dump(m, sort_keys=False, allow_unicode=True))
         errors = eval_config_errors(cfg, m)

@@ -192,3 +192,19 @@ def test_aucun_chemin_absolu_dans_les_configs():
     for path in ALL_CONFIGS:
         text = path.read_text()
         assert "/home/" not in text, f"{path} contient un chemin personnel"
+
+
+def test_manifest_dune_reference_non_satisfaite_sort_en_code_3(monkeypatch, tmp_path):
+    """Code 3 = « l'entraînement évalué n'a pas encore tourné pour cette seed ».
+
+    C'est le contrat que `jobs/_common.sh` et les lanceurs lisent pour distinguer un
+    `--dry-run` légitimement incomplet d'une vraie erreur de configuration (code 1).
+    """
+    import subprocess
+    env = {**os.environ, "MADEVO_RUNS": str(tmp_path / "runs")}
+    out = subprocess.run(
+        [sys.executable, "tools/cfg.py", "manifest", "configs/eval/evimo2.yaml",
+         "--seed", "1", "--out", str(tmp_path / "manifest.yaml")],
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True)
+    assert out.returncode == 3, out.stderr
+    assert "non résolue" in out.stderr

@@ -142,8 +142,19 @@ job_prepare() {
 # write_manifest : provenance exacte des checkpoints d'une éval, dans le dossier du run.
 write_manifest() {
     local out="${WORK_DIR:-$RUN_DIR}/manifest.yaml"
+    local rc=0
     python tools/cfg.py manifest "$CONFIG" "${OVERRIDES[@]}" \
-        --seed "$SEED" --out "$out" || die "écriture du manifest"
+        --seed "$SEED" --out "$out" || rc=$?
+    # Code 3 : les checkpoints de M1/M2/M3 n'existent pas encore pour cette seed. En
+    # dry-run c'est le cas normal avant la campagne ; en vrai c'est un ordre de lancement
+    # faux (cf. §8 de JOBS_AND_RUNS.md).
+    if (( rc == 3 )) && [[ "${DRY_RUN:-0}" == 1 ]]; then
+        echo "--- dry-run : manifest NON résolu ---"
+        echo "dossier de run : $RUN_DIR"
+        echo "(normal si les entraînements évalués n'ont pas encore tourné pour cette seed)"
+        exit 3
+    fi
+    (( rc == 0 )) || die "écriture du manifest"
     if [[ "${DRY_RUN:-0}" == 1 ]]; then
         echo "--- manifest (provenance des checkpoints) ---"
         cat "$out"

@@ -80,11 +80,21 @@ if (( DRY_RUN )); then
     printf 'commande : '; printf '%q ' "${CMD[@]}"; echo
     echo
     echo "Les jobs eux-mêmes se résolvent ainsi (seed par seed) :"
+    # Code 3 = commande ou manifest non résolu faute d'entraînement antérieur : attendu
+    # avant la campagne, donc ce n'est pas un échec de la vérification.
+    unresolved=0
     for seed in "${SEEDS[@]}"; do
         echo "================ seed $seed ================"
+        rc=0
         ( cd "$REPO_ROOT" && SEED="$seed" LAUNCH_ID="$LAUNCH_ID" RESUME="$RESUME" DRY_RUN=1 \
-            bash "$JOB" "${JOB_ARGS[@]}" )
+            bash "$JOB" "${JOB_ARGS[@]}" ) || rc=$?
+        case "$rc" in
+            0) ;;
+            3) unresolved=$(( unresolved + 1 )) ;;
+            *) die "dry-run de la seed $seed : code $rc" ;;
+        esac
     done
+    (( unresolved )) && echo "($unresolved seed(s) en attente d'un entraînement antérieur)"
     exit 0
 fi
 
