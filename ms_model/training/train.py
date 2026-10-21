@@ -18,6 +18,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from utils.wandb_logger import RunLogger, mask_image, voxel_image  # noqa: E402
 
 
+def training_sequences(data_cfg: dict) -> list[str]:
+    """Séquences d'entraînement : `train_sequences`, plus `extra_train_sequences` s'il y en a.
+
+    `extra_train_sequences` sert aux séquences ajoutées à l'ensemble principal sans le
+    remplacer, p. ex. les scènes statiques SfM d'EVIMO2 (docs/sfm_sequences.md). Les
+    entraînements couplés lisent la même liste (train_coupled.py).
+    """
+    return list(data_cfg["train_sequences"]) + list(data_cfg.get("extra_train_sequences") or [])
+
+
 def build_dataset(paths: list[str], data_cfg: dict, root: Path) -> EvimoSegDataset:
     return EvimoSegDataset(
         npz_paths=[root / p for p in paths],
@@ -152,7 +162,7 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
     model_name = model_cfg.pop("name")
 
     print("== Chargement du dataset d'entrainement ==", flush=True)
-    train_set = build_dataset(data_cfg["train_sequences"], data_cfg, root)
+    train_set = build_dataset(training_sequences(data_cfg), data_cfg, root)
     print("== Chargement du dataset de validation ==", flush=True)
     val_set = build_dataset(data_cfg["val_sequences"], data_cfg, root)
 

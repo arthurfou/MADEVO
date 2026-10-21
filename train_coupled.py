@@ -246,8 +246,8 @@ def build_dataset(args):
         from utils.run_utils import resolve_config
         seqs = args.evimo_seqs
         if not seqs:  # à défaut, réutilise le split train du yaml MS
-            data_cfg = resolve_config(args.ms_config)["data"]
-            seqs = data_cfg["train_sequences"]
+            from ms_model.training.train import training_sequences
+            seqs = training_sequences(resolve_config(args.ms_config)["data"])
         # Les séquences du yaml MS sont relatives à la racine de la caméra, p. ex.
         # « imo/train/scene10_dyn_train_00_000000 » : --datapath doit donc valoir
         # datasets/evimo2/samsung_mono, et non datasets/evimo2 (erreur des anciens
@@ -379,9 +379,11 @@ def train_coupled(args):
                 res = res_patch.view(-1)                                                   # (K,) détaché
                 med = res.median()
                 mad = (res - med).abs().median() + 1e-6
-                selfsup_stats = {"median": float(med), "mad": float(mad),
-                                 "threshold": float(med + args.selfsup_k * mad)}
-                target = (res > (med + args.selfsup_k * mad)).float().detach()
+                # seuil robuste relatif, borné par un plancher absolu (px) : sur une scène
+                # statique, médiane + k·MAD marquerait toujours la queue de distribution
+                thr = torch.clamp(med + args.selfsup_k * mad, min=args.selfsup_min_res)
+                selfsup_stats = {"median": float(med), "mad": float(mad), "threshold": float(thr)}
+                target = (res > thr).float().detach()
                 selfsup_stats["pos_frac"] = float(target.mean())
                 mask_l = F.binary_cross_entropy(dyn_patch.clamp(1e-6, 1 - 1e-6), target)
                 loss = loss + args.mask_weight * mask_l
@@ -486,6 +488,8 @@ if __name__ == "__main__":
     # M3 auto-supervisé (sans GT) : masque supervisé par le résidu de la DBA
     p.add_argument('--selfsup', action='store_true',
                    help='M3 : supervise le masque par le résidu DBA (incohérence rigide), sans GT')
+    p.add_argument('--selfsup_min_res', type=float, default=0.0,
+                   help='M3 : plancher absolu (px) du seuil sur les résidus (0 = stage, cf. docs/sfm_sequences.md)')
     p.add_argument('--selfsup_k', type=float, default=3.0,
                    help='seuil robuste médiane + k·MAD sur le résidu pour étiqueter dynamique')
     # archi DEVO
