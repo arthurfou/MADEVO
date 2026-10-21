@@ -36,8 +36,8 @@ sys.path.insert(0, str(REPO_ROOT / "evals" / "eval_evs"))
 # `utils.eval_utils` importe DEVO, donc les extensions CUDA : importé seulement au moment
 # d'évaluer, pour que `--dry-run` tourne sur une machine sans GPU.
 from utils.metrics import mean_scene_ate  # noqa: E402
-from utils.run_utils import (eval_manifest, mask_definition_mismatches, resolve_config,  # noqa: E402
-                             resolve_eval_sources)
+from utils.run_utils import (EVAL_DATASETS, ORACLE_DATASETS, eval_config_errors,  # noqa: E402
+                             eval_manifest, resolve_config, resolve_eval_sources)
 from utils.wandb_logger import RunLogger  # noqa: E402
 
 # Nom affiché de chaque méthode, dans l'ordre des tables du rapport.
@@ -50,8 +50,18 @@ METHOD_LABELS = {
 }
 METHOD_ORDER = list(METHOD_LABELS)
 
-# Un dataset = un runner `evaluate(...)` et un module de providers.
-DATASETS = {"evimo2": "eval_evimo2_evs"}
+# Un dataset = un runner `evaluate(...)` (evals/eval_evs/), les options propres à ce runner,
+# et la clé du chargeur d'events de `utils/ms_dataset_factory.py` pour les masques appris
+# (None : masques appris lus dans les npz EVIMO, avec oracle possible).
+DATASETS = {
+    "evimo2": {"runner": "eval_evimo2_evs", "runner_args": {}, "ms_loader": None},
+    "rpg":    {"runner": "eval_rpg_evs", "runner_args": {"side": "left"}, "ms_loader": "rpg"},
+    "mvsec":  {"runner": "eval_mvsec_evs", "runner_args": {"side": "left"}, "ms_loader": "mvsec"},
+    "eds":    {"runner": "eval_eds_evs", "runner_args": {"calib1": False}, "ms_loader": "eds"},
+    "vector": {"runner": "eval_vector_evs", "runner_args": {"side": "left"}, "ms_loader": "vector"},
+    "tumvie": {"runner": "eval_tumvie_evs", "runner_args": {"camID": 2}, "ms_loader": "tumvie"},
+}
+assert set(DATASETS) == set(EVAL_DATASETS)
 
 
 def _get(cfg, dotted, default="__raise__"):
@@ -79,15 +89,23 @@ def write_manifest(path, cfg, seed, sources, ms_arch):
 def build_factories(cfg, sources, ms_arch, device="cuda"):
     """{méthode: (poids DEVO, fabrique de provider de masque)} pour les méthodes demandées."""
     from evimo_providers import make_learned_factory, make_oracle_factory
+    from utils.ms_dataset_factory import make_ms_factory
 
-    mask_root = str(_get(cfg, "dataset.mask_root"))
+    dataset = _get(cfg, "dataset.name")
+    spec = DATASETS[dataset]
+    mask_root = _get(cfg, "dataset.mask_root", None)
     devo_weights = str(_get(cfg, "devo.weights"))
-    oracle_cfg = _get(cfg, "oracle")
     threshold = _get(cfg, "threshold", None)
+    runner_args = {**spec["runner_args"], **_get(cfg, "dataset.runner_args", {})}
 
     def learned(ms_weights):
-        return make_learned_factory(mask_root, str(ms_weights), str(ms_arch),
-                                    threshold=threshold, device=device)
+        if spec["ms_loader"] is None:
+            return make_learned_factory(str(mask_root), str(ms_weights), str(ms_arch),
+                                        threshold=threshold, device=device)
+        return make_ms_factory(spec["ms_loader"], str(ms_weights), str(ms_arch),
+                               side=runner_args.get("side", "left"),
+                               camID=runner_args.get("camID", 2),
+                               threshold=threshold, device=device)
 
     plans = {}
     for method in _get(cfg, "methods"):
@@ -96,8 +114,11 @@ def build_factories(cfg, sources, ms_arch, device="cuda"):
         if method == "vanilla":
             plans[method] = (devo_weights, None)
         elif method == "oracle":
+            if dataset not in ORACLE_DATASETS:
+                raise ValueError(f"pas d'oracle sur {dataset} : aucun masque GT de mouvement")
+            oracle_cfg = _get(cfg, "oracle")
             plans[method] = (devo_weights, make_oracle_factory(
-                mask_root, thicken_radius=oracle_cfg["thicken_radius"],
+                str(mask_root), thicken_radius=oracle_cfg["thicken_radius"],
                 device=device, mask_motion=oracle_cfg["mask_motion"],
                 motion_thresh_m=oracle_cfg["motion_thresh_m"],
                 motion_window_s=oracle_cfg["motion_window_s"]))
@@ -109,11 +130,13 @@ def build_factories(cfg, sources, ms_arch, device="cuda"):
 
 def run_methods(cfg, args, plans, devo_cfg):
     """Lance chaque méthode et renvoie (ATE moyen par méthode, ATE par scène)."""
-    runner = __import__(DATASETS[_get(cfg, "dataset.name")])
+    spec = DATASETS[_get(cfg, "dataset.name")]
+    runner = __import__(spec["runner"])
     common = dict(datapath=str(_get(cfg, "dataset.root")),
                   split_file=str(_get(cfg, "dataset.split")),
                   trials=int(_get(cfg, "trials", 1)), plot=False, save=True,
-                  stride=int(_get(cfg, "stride", 1)))
+                  stride=int(_get(cfg, "stride", 1)),
+                  **spec["runner_args"], **_get(cfg, "dataset.runner_args", {}))
     if _get(cfg, "export_map", False):
         common["map_path"] = str(Path(args.run_dir) / "map.ply")
 
@@ -162,6 +185,22 @@ def write_table(ate, out_dir):
                 f.write(f"| {name} | {value:.4f} | "
                         f"{'' if delta is None else f'{delta:+.1f}%'} |\n")
     return rows
+
+
+def write_per_scene(per_scene, out_dir):
+    """`per_scene.csv` : ATE [cm] par scène (lignes) et par méthode (colonnes).
+
+    Sert au contrôle de non-régression (`tools/check_nonregression.py`) et au papier.
+    """
+    scenes = sorted({s for res in per_scene.values() for s in res if s not in ("AUC", "AVG")})
+    methods = [m for m in METHOD_ORDER if m in per_scene]
+    with open(Path(out_dir) / "per_scene.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["scene"] + methods)
+        for scene in scenes:
+            values = [per_scene[m].get(scene) for m in methods]
+            writer.writerow([scene] + ["" if v is None else f"{float(v):.6f}" for v in values])
+    return scenes
 
 
 def log_to_wandb(cfg, args, rows, per_scene, manifest):
@@ -221,10 +260,9 @@ def main():
     if missing:
         raise SystemExit(f"checkpoints introuvables pour {missing} — voir "
                          f"{Path(args.run_dir) / 'manifest.yaml'}")
-    mismatches = mask_definition_mismatches(manifest)
-    if mismatches:
-        raise SystemExit("masque GT de l'oracle différent de celui de l'entraînement (T7) :\n  "
-                         + "\n  ".join(mismatches))
+    errors = eval_config_errors(cfg, manifest)
+    if errors:
+        raise SystemExit("config d'éval invalide :\n  " + "\n  ".join(errors))
 
     if args.dry_run:
         print(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True))
@@ -248,6 +286,7 @@ def main():
     ate, per_scene = run_methods(cfg, args, plans, devo_cfg)
 
     rows = write_table(ate, args.run_dir)
+    write_per_scene(per_scene, args.run_dir)
     print(f"\n==================== TABLE {dataset.upper()} (seed {args.seed}) ====================")
     for name, value, delta in rows:
         shown = "—" if value is None else f"{value:.4f}"

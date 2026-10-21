@@ -1,0 +1,20 @@
+# Validation cross-dataset : RPG stereo DAVIS (Zhou et al., ECCV 2018), 8 scènes, caméra gauche.
+# Pas de masque GT de mouvement : pas d'oracle, seulement vanilla et les modèles appris
+# (entraînés sur EVIMO2 seul). Données : bash scripts/download/download_rpg.sh
+# Lancement : launch/tmux.sh --seeds 1-5 jobs/eval_table.sh configs/eval/rpg.yaml
+exp: eval_rpg
+
+dataset:
+  name: rpg
+  root: ${MADEVO_DATASETS:-datasets}/rpg                     # --datapath (format DEVO, produit par scripts/pp_rpg.py)
+  split: splits/rpg/rpg_val.txt
+
+devo:
+  weights: ${MADEVO_PRETRAINED:-pretrained}/DEVO.pth
+  config: config/eval_rpg.yaml           # hyperparamètres VO de DEVO amont pour ce dataset
+
+methods: [vanilla, m1, m2, m3]
+sources: evimo2                         # mêmes checkpoints que la table EVIMO2 nominale
+
+threshold: null                         # null = score continu, sinon seuil binaire
+export_map: false

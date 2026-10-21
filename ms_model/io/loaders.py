@@ -222,13 +222,16 @@ def load_events_prophesee_h5(h5_path: Union[str, Path], H: int = 260, W: int = 3
     import h5py
     with h5py.File(str(h5_path), 'r') as f:
         prefix = 'events/' if 'events/x' in f else ''
-        t = f[f'{prefix}t'][:].astype(np.float64)
-        x = f[f'{prefix}x'][:].astype(np.float64)
-        y = f[f'{prefix}y'][:].astype(np.float64)
-        p = f[f'{prefix}p'][:].astype(np.float64)
         t_offset = int(f['t_offset'][()]) if 't_offset' in f else 0
-    t_abs_s = (t + t_offset) / 1e6  # µs → secondes
-    events = np.stack([t_abs_s, x, y, p], axis=1)
+        # rempli colonne par colonne : un np.stack doublerait le pic mémoire (centaines de
+        # millions d'events sur TUM-VIE)
+        events = np.empty((f[f'{prefix}t'].shape[0], 4), dtype=np.float64)
+        events[:, 0] = f[f'{prefix}t'][:]
+        events[:, 1] = f[f'{prefix}x'][:]
+        events[:, 2] = f[f'{prefix}y'][:]
+        events[:, 3] = f[f'{prefix}p'][:]
+    events[:, 0] += t_offset
+    events[:, 0] /= 1e6  # µs → secondes
     return EventArray(events=events, H=H, W=W)
 
 

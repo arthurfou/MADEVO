@@ -1,0 +1,20 @@
+# Validation cross-dataset : TUM-VIE (Klenk et al., IROS 2021), 12 scènes publiques, caméra event gauche.
+# Pas de masque GT de mouvement : pas d'oracle, seulement vanilla et les modèles appris
+# (entraînés sur EVIMO2 seul). Données : bash scripts/download/download_tumvie.sh
+# Lancement : launch/tmux.sh --seeds 1-5 jobs/eval_table.sh configs/eval/tumvie.yaml
+exp: eval_tumvie
+
+dataset:
+  name: tumvie
+  root: ${MADEVO_DATASETS:-datasets}/tumvie                     # --datapath (format DEVO, produit par scripts/pp_tumvie.py)
+  split: splits/tumvie/tumvie_val_public.txt
+
+devo:
+  weights: ${MADEVO_PRETRAINED:-pretrained}/DEVO.pth
+  config: config/eval_tumvie.yaml           # hyperparamètres VO de DEVO amont pour ce dataset
+
+methods: [vanilla, m1, m2, m3]
+sources: evimo2                         # mêmes checkpoints que la table EVIMO2 nominale
+
+threshold: null                         # null = score continu, sinon seuil binaire
+export_map: false

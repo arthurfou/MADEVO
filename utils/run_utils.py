@@ -241,6 +241,11 @@ def resolve_eval_sources(cfg, seed, repo_root: Path = None):
     return out, ms_arch
 
 
+# Datasets évaluables par `evals/eval_table.py`. Seul EVIMO2 a un masque GT, donc un oracle ;
+# les autres servent à la validation cross-dataset (vanilla, M1, M2, M3).
+EVAL_DATASETS = ("evimo2", "rpg", "mvsec", "eds", "vector", "tumvie")
+ORACLE_DATASETS = ("evimo2",)
+
 MASK_DEF_KEYS = ("mask_motion", "motion_thresh_m", "motion_window_s")
 
 
@@ -266,6 +271,8 @@ def mask_definition_mismatches(manifest) -> list[str]:
     (cf. T7) : l'éval s'arrête sur la liste renvoyée. Un run sans `config.yaml` (fabriqué
     hors des jobs) n'est pas vérifiable et n'est pas signalé.
     """
+    if "oracle" not in manifest.get("methods", []):
+        return []  # rien à comparer (éval cross-dataset, ou table sans oracle)
     oracle = manifest.get("oracle", {})
     out = []
     for method, info in manifest["checkpoints"].items():
@@ -278,6 +285,24 @@ def mask_definition_mismatches(manifest) -> list[str]:
             out.append(f"{method} : " + ", ".join(f"{k} entraînement={a!r} oracle={b!r}"
                                                   for k, (a, b) in diff.items()))
     return out
+
+
+def eval_config_errors(cfg, manifest) -> list[str]:
+    """Erreurs de configuration d'une éval, détectables sans GPU ni checkpoint.
+
+    Appelée par `tools/cfg.py manifest` (donc par le `--dry-run` des jobs) et par
+    `evals/eval_table.py` avant d'évaluer quoi que ce soit.
+    """
+    errors = []
+    dataset = cfg.get("dataset", {}).get("name")
+    if dataset not in EVAL_DATASETS:
+        errors.append(f"dataset inconnu : {dataset!r} (attendu : {', '.join(EVAL_DATASETS)})")
+    if "oracle" in cfg.get("methods", []) and dataset not in ORACLE_DATASETS:
+        errors.append(f"pas d'oracle sur {dataset} : seul {', '.join(ORACLE_DATASETS)} a un masque "
+                      "GT de mouvement (retirer `oracle` de `methods`)")
+    errors += [f"masque GT de l'oracle différent de celui de l'entraînement (T7) — {m}"
+               for m in mask_definition_mismatches(manifest)]
+    return errors
 
 
 def eval_manifest(cfg, seed, sources, ms_arch) -> dict:

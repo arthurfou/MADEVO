@@ -57,3 +57,52 @@ fetch() {
         (( have == size )) || die "taille inattendue pour $dest ($have octets au lieu de $size)"
     fi
 }
+
+# fetch_gdrive <id> <fichier> : téléchargement Google Drive (gdown). Drive ne donne pas la
+# taille à l'avance : un marqueur `<fichier>.ok` signale un téléchargement complet.
+fetch_gdrive() {
+    local id=$1 dest=$2
+    if [[ -f "$dest.ok" && -s "$dest" ]]; then
+        log "déjà téléchargé : $dest"
+        return 0
+    fi
+    require_python_modules gdown
+    mkdir -p "$(dirname "$dest")"
+    log "téléchargement Google Drive : $id → $dest"
+    python -c 'import sys, gdown
+out = gdown.download(id=sys.argv[1], output=sys.argv[2], quiet=False, resume=True)
+sys.exit(0 if out else 1)' "$id" "$dest" \
+        || die "échec gdown pour $id (quota Drive dépassé ? réessayer plus tard)"
+    [[ -s "$dest" ]] || die "fichier vide : $dest"
+    touch "$dest.ok"
+}
+
+# split_sequences <fichier split> : séquences du split, sans lignes vides ni commentaires.
+split_sequences() {
+    grep -vE '^\s*(#|$)' "$1" | tr -d '\r'
+}
+
+# select_sequences "<liste CSV ou vide>" <fichier split> : la liste demandée, ou tout le split.
+select_sequences() {
+    if [[ -n "$1" ]]; then tr ',' '\n' <<< "$1"; else split_sequences "$2"; fi
+}
+
+# check_outputs <dossier> <fichier>... : échoue si un fichier attendu manque ou est vide.
+check_outputs() {
+    local dir=$1 f; shift
+    for f in "$@"; do
+        compgen -G "$dir/$f" > /dev/null || die "prétraitement incomplet : $dir/$f manquant"
+    done
+}
+
+# evo (évaluation de trajectoires, importé par utils/) applique à l'import son réglage
+# `plot_backend`, Qt5Agg par défaut : sans Qt (serveur, WSL), tout import de utils/ échoue.
+ensure_headless_evo() {
+    command -v evo_config > /dev/null || return 0
+    local backend
+    backend=$(python -c "from evo.tools.settings import SETTINGS; print(SETTINGS.plot_backend)" 2> /dev/null || true)
+    if [[ "$backend" == Qt* ]]; then
+        log "evo : plot_backend passé à Agg (~/.evo/settings.json), sans Qt sur cette machine"
+        evo_config set plot_backend Agg > /dev/null
+    fi
+}

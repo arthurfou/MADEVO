@@ -41,6 +41,7 @@ for seq in "${SEQUENCES[@]}"; do
 done
 
 if (( PREPROCESS )); then
+    ensure_headless_evo
     log "prétraitement DEVO (scripts/pp_rpg.py)"
     (cd "$REPO_ROOT" && PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" python scripts/pp_rpg.py --indir "$OUT")
     # pp_rpg.py lance des sous-processus dont les erreurs ne remontent pas : on vérifie les sorties.

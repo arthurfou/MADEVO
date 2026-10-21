@@ -28,6 +28,29 @@ from ms_model.masking import thicken_mask
 from ms_model.data.evimo_dataset import downsample_mask
 
 
+def _predict_scores(model, ea, frame_ts: np.ndarray, nb_time_bins: int, seq_len: int,
+                    device, threshold: Optional[float] = None) -> torch.Tensor:
+    """Scores (N, Hp, Wp) pour les N = len(frame_ts) − 1 intervalles, par tranches de seq_len.
+
+    Les voxels d'une tranche sont construits juste avant d'être prédits puis jetés : la
+    mémoire ne dépend plus de la longueur de la séquence (sur TUM-VIE, voxeliser toute une
+    séquence d'avance demandait des dizaines de Go). Le ConvLSTM repart d'un état nul à chaque
+    tranche, comme avant.
+    """
+    from ms_model.representations.voxel import make_voxel_sequence
+
+    probs = []
+    n = len(frame_ts) - 1
+    with torch.no_grad():
+        for start in range(0, n, seq_len):
+            chunk = make_voxel_sequence(ea, frame_ts[start:start + seq_len + 1],
+                                        nb_of_time_bins=nb_time_bins)
+            logits = model(chunk.unsqueeze(0).to(device))          # (1, T, 1, Hp, Wp)
+            probs.append(torch.sigmoid(logits)[0, :, 0].cpu())     # (T, Hp, Wp)
+    scores = torch.cat(probs, dim=0)
+    return (scores > threshold).float() if threshold is not None else scores
+
+
 class TimestampMaskProvider:
     """Base commune : sert un score (1, 1, Hp, Wp) par timestamp (plus proche voisin).
 
@@ -159,30 +182,17 @@ class LearnedDynMaskProvider(TimestampMaskProvider):
     ) -> None:
         # import local pour ne pas alourdir l'import du module (charge torch/modèles)
         from ms_model.inference import load_model_from_checkpoint
-        from ms_model.representations.voxel import make_voxel_sequence
 
         device = torch.device(device)
         model, data_cfg = load_model_from_checkpoint(weights_path, config_path, device)
-        nb_time_bins = data_cfg["nb_time_bins"]
-        seq_len = data_cfg["seq_len"]
 
         ea = load_events(npz_path)
         # ts = bornes de frames (meta EVIMO) — dispo sans GT de segmentation ; à la voxelisation
         # DEVO ce seraient les temps de frame du flux d'events.
         frame_ts = load_evimo_mask(npz_path).ts
-        voxel_seq = make_voxel_sequence(ea, frame_ts, nb_of_time_bins=nb_time_bins)  # (N, C, H, W)
-        N = voxel_seq.shape[0]
-
-        probs = []
-        with torch.no_grad():
-            for start in range(0, N, seq_len):
-                chunk = voxel_seq[start:start + seq_len].unsqueeze(0).to(device)  # (1, T, C, H, W)
-                logits = model(chunk)                       # (1, T, 1, Hp, Wp)
-                probs.append(torch.sigmoid(logits)[0, :, 0].cpu())  # (T, Hp, Wp)
-        scores = torch.cat(probs, dim=0)                    # (N, Hp, Wp) in [0,1]
-
-        if threshold is not None:
-            scores = (scores > threshold).float()
+        scores = _predict_scores(model, ea, frame_ts, data_cfg["nb_time_bins"],
+                                 data_cfg["seq_len"], device, threshold)   # (N, Hp, Wp)
+        N = scores.shape[0]
 
         # la i-ème prédiction couvre [ts_i, ts_{i+1}) -> on l'étiquette par ts_i
         super().__init__(frame_ts[:N], scores, device=device, max_dt_ms=max_dt_ms,
@@ -212,27 +222,14 @@ class LearnedDynMaskProvider(TimestampMaskProvider):
             config_path: yaml d'entraînement MS.
         """
         from ms_model.inference import load_model_from_checkpoint
-        from ms_model.representations.voxel import make_voxel_sequence
 
         device_t = torch.device(device)
         model, data_cfg = load_model_from_checkpoint(weights_path, config_path, device_t)
-        nb_time_bins = data_cfg["nb_time_bins"]
-        seq_len = data_cfg["seq_len"]
 
         frame_ts = np.asarray(frame_ts, dtype=np.float64)
-        voxel_seq = make_voxel_sequence(ea, frame_ts, nb_of_time_bins=nb_time_bins)
-        N = voxel_seq.shape[0]
-
-        probs = []
-        with torch.no_grad():
-            for start in range(0, N, seq_len):
-                chunk = voxel_seq[start:start + seq_len].unsqueeze(0).to(device_t)
-                logits = model(chunk)
-                probs.append(torch.sigmoid(logits)[0, :, 0].cpu())
-        scores = torch.cat(probs, dim=0)
-
-        if threshold is not None:
-            scores = (scores > threshold).float()
+        scores = _predict_scores(model, ea, frame_ts, data_cfg["nb_time_bins"],
+                                 data_cfg["seq_len"], device_t, threshold)
+        N = scores.shape[0]
 
         obj = object.__new__(cls)
         TimestampMaskProvider.__init__(

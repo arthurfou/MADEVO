@@ -50,7 +50,19 @@ def process_seq_eds(indirs, calibstr="calib0"):
             tss_imgs_us -= offset_us
             np.savetxt(os.path.join(indir, "images_timestamps_us.txt"), tss_imgs_us, fmt="%d")
 
-            ef_in["t"][:] -= offset_us
+            # Écriture atomique : copie décalée dans un fichier temporaire, puis renommage. Une
+            # soustraction en place sur events.h5 laissait un fichier corrompu (et un offset
+            # recalculé sur des timestamps à moitié décalés) si le script était interrompu.
+            tmpfile = os.path.join(indir, evinfile) + ".tmp"
+            with h5py.File(tmpfile, "w") as ef_out:
+                for key in ef_in.keys():
+                    data = ef_in[key][:]
+                    if key == "t":
+                        data = data - offset_us
+                    ef_out.create_dataset(key, data=data, compression=ef_in[key].compression)
+            ef_in.close()
+            os.replace(tmpfile, os.path.join(indir, evinfile))
+            ef_in = h5py.File(os.path.join(indir, evinfile), "r+")
             tss_evs_us -= offset_us
             np.savetxt(os.path.join(indir, "t_offset_us.txt"), np.array([offset_us]))
             # Don't close ef_in here — kept open for ms_to_idx step below

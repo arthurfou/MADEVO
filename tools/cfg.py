@@ -23,7 +23,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.run_utils import (  # noqa: E402
-    eval_dir, eval_manifest, latest_coupled_checkpoint, resolve_config,
+    EVAL_DATASETS, eval_config_errors, eval_dir, eval_manifest, latest_coupled_checkpoint, resolve_config,
     resolve_eval_sources, resolve_ref, run_dir,
 )
 
@@ -96,7 +96,8 @@ def argv_coupled(cfg, cfg_path, run_dir_path, seed):
     if mode == "supervised":
         args += ["--provide_gt_mask"]
     elif mode == "selfsup":
-        args += ["--selfsup", "--selfsup_k", str(_get(cfg, "loss.selfsup_k"))]
+        args += ["--selfsup", "--selfsup_k", str(_get(cfg, "loss.selfsup_k")),
+                 "--selfsup_min_res", str(_get(cfg, "loss.selfsup_min_res", 0.0))]
     else:
         raise ValueError(f"loss.mode inconnu : '{mode}' (supervised | selfsup)")
 
@@ -115,7 +116,7 @@ def argv_coupled(cfg, cfg_path, run_dir_path, seed):
 def argv_eval(cfg, cfg_path, out_dir, seed):
     """Table d'évaluation : tout vient de la config résolue, rien n'est répété en options."""
     dataset = _get(cfg, "dataset.name")
-    if dataset not in ("evimo2",):
+    if dataset not in EVAL_DATASETS:
         raise ValueError(f"pas de runner d'éval pour le dataset '{dataset}'")
     return ["python", EVAL_SCRIPT,
             "--config", str(cfg_path),
@@ -202,9 +203,12 @@ def main():
         print(out_dir_for("eval" if kind == "eval" else "train", cfg, args.launch_id, args.seed))
 
     elif args.command == "manifest":
+        m = manifest(cfg, args.seed)
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.out).write_text(
-            yaml.safe_dump(manifest(cfg, args.seed), sort_keys=False, allow_unicode=True))
+        Path(args.out).write_text(yaml.safe_dump(m, sort_keys=False, allow_unicode=True))
+        errors = eval_config_errors(cfg, m)
+        if errors:
+            sys.exit("config d'éval invalide :\n  " + "\n  ".join(errors))
 
     elif args.command == "argv":
         cfg_path = args.resolved or args.config

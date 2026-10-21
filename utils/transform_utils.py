@@ -3,8 +3,6 @@ import numpy as np
 import torch
 import torchvision
 
-from devo.lietorch import SE3
-
 
 def transform_rescale(scale, voxels, disps=None, poses=None, intrinsics=None):
     """Transform voxels/images, depth maps, poses and intrinsics (n_frames,*)"""
@@ -23,6 +21,9 @@ def transform_rescale(scale, voxels, disps=None, poses=None, intrinsics=None):
     return voxels, disps, poses, intrinsics
 
 def transform_rescale_poses(scale, poses):
+    # import local : lietorch charge les extensions CUDA, inutiles au reste du module
+    # (prétraitements et itérateurs d'events, utilisables sans GPU)
+    from devo.lietorch import SE3
     s = torch.tensor(scale)
     poses = SE3(poses).scale(s).data
     return poses

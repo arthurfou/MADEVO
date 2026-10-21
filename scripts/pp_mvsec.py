@@ -45,8 +45,8 @@ def process_seq_mvsec(infilesh5, side="left"):
     for fnameh5 in infilesh5:
         print(f"\n\n MVSEC: Computing rect-map for {fnameh5}, and undistorting images.")
 
-        outdir = fnameh5.split(".")[0]
-        fnameh5_gt = fnameh5.split(".")[0][:-5] + "_gt.hdf5"
+        outdir = os.path.splitext(fnameh5)[0]
+        fnameh5_gt = os.path.splitext(fnameh5)[0][:-5] + "_gt.hdf5"
         if not os.path.exists(outdir):
             os.makedirs(outdir, exist_ok=True)
             
@@ -54,7 +54,7 @@ def process_seq_mvsec(infilesh5, side="left"):
             shutil.copy(fnameh5_gt, outdir)
 
             fnameh5 = os.path.join(outdir, os.path.basename(fnameh5))
-            fnameh5_gt = fnameh5.split(".")[0][:-5] + "_gt.hdf5"
+            fnameh5_gt = os.path.splitext(fnameh5)[0][:-5] + "_gt.hdf5"
         
         datain = h5py.File(fnameh5, 'r')
         H, W = datain["davis"][side]["image_raw"].shape[1:]
@@ -153,7 +153,7 @@ if __name__ == "__main__":
 
     infilesh5 = []
     for file in os.listdir(args.indir):
-        if "_data.hdf5" in file:
+        if file.endswith("_data.hdf5"):
             infilesh5.append(os.path.join(args.indir, file))
 
     cors = 2

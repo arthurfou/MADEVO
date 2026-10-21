@@ -134,3 +134,27 @@ def test_load_config_suit_extends():
 
 def test_frame_masks_longueur():
     assert len(FrameMasks(masks=np.zeros((3, 2, 2)), ts=np.zeros(3))) == 3
+
+
+def test_scores_par_tranches_identiques_au_calcul_complet():
+    """Le provider voxelise par tranches de seq_len (mémoire bornée) : même résultat que
+    voxeliser toute la séquence puis prédire par tranches, comme avant."""
+    from ms_model.io.events import EventArray
+    from ms_model.oracle import _predict_scores
+    from ms_model.representations.voxel import make_voxel_sequence
+
+    rng = np.random.default_rng(0)
+    t = np.sort(rng.uniform(0, 1, 3000))
+    ev = np.stack([t, rng.integers(0, 40, 3000), rng.integers(0, 32, 3000),
+                   rng.integers(0, 2, 3000)], axis=1).astype(np.float64)
+    ea = EventArray(events=ev, H=32, W=40)
+    frame_ts = np.linspace(0, 1, 12)   # 11 intervalles, seq_len 4 → tranches 4, 4, 3
+    model = _small_model()
+
+    got = _predict_scores(model, ea, frame_ts, 5, 4, torch.device("cpu"))
+    full = make_voxel_sequence(ea, frame_ts, nb_of_time_bins=5)
+    with torch.no_grad():
+        ref = torch.cat([torch.sigmoid(model(full[s:s + 4].unsqueeze(0)))[0, :, 0]
+                         for s in range(0, len(full), 4)])
+    assert got.shape == (11, 8, 10)
+    torch.testing.assert_close(got, ref)

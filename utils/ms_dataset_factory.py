@@ -4,6 +4,11 @@ Pour les datasets sans objets dynamiques GT (tous sauf EVIMO), on applique le mo
 en inférence pure (mode M1/M2/M3). Le modèle donnerait idéalement des scores proches de 0
 sur des scènes statiques, laissant DEVO se comporter comme vanilla.
 
+Géométrie : DEVO voxelise ces datasets en coordonnées **rectifiées** (`rectify_map[y, x]`,
+cf. `utils/load_utils.py`). Le provider applique la même carte avant de voxeliser, sinon la
+score map du MS et celle de DEVO ne désignent pas les mêmes pixels (jusqu'à plusieurs
+dizaines de pixels au bord des optiques fisheye de TUM-VIE et MVSEC).
+
 Usage :
     from utils.ms_dataset_factory import make_ms_factory
 
@@ -31,6 +36,30 @@ def _frame_ts_s(tss_txt_path: str) -> np.ndarray:
     return np.sort(np.loadtxt(tss_txt_path).astype(np.float64)) / 1e6
 
 
+def _read_rectify_map(path: str) -> np.ndarray:
+    import h5py
+    with h5py.File(path, "r") as f:
+        return np.array(f["rectify_map"])  # (H, W, 2) : (x, y) rectifiés
+
+
+def rectify_events(ea, rmap_path: Optional[str]):
+    """EventArray aux coordonnées rectifiées, comme les itérateurs DEVO (`rectify_map[y, x]`).
+
+    Sans carte (`None` ou fichier absent), l'EventArray est rendu tel quel. Les events qui
+    tombent hors du capteur après rectification sont écartés par la voxelisation.
+    """
+    if rmap_path is None or not os.path.exists(rmap_path):
+        return ea
+    from ms_model.io.events import EventArray
+    rmap = _read_rectify_map(rmap_path)
+    assert rmap.shape[:2] == (ea.H, ea.W), \
+        f"carte de rectification {rmap.shape[:2]} ≠ capteur {(ea.H, ea.W)} ({rmap_path})"
+    events = ea.events.copy()
+    rect = rmap[ea.y.astype(np.int64), ea.x.astype(np.int64)]
+    events[:, 1], events[:, 2] = rect[:, 0], rect[:, 1]
+    return EventArray(events=events, H=ea.H, W=ea.W, frame_ts=ea.frame_ts)
+
+
 def _make_provider(ea, frame_ts_s, ms_weights, ms_config, threshold, device):
     from ms_model.oracle import LearnedDynMaskProvider
     return LearnedDynMaskProvider.from_event_array(
@@ -50,14 +79,15 @@ def _load_rpg(scenedir: str, side: str = "left") -> tuple:
     tss_path = os.path.join(scenedir, f"tss_imgs_us_{side}.txt")
     H, W = (260, 346) if "simulation_3planes" in scenedir else (180, 240)
     ea = load_events_rpg(evs_path, H=H, W=W)
-    return ea, _frame_ts_s(tss_path)
+    rmap = None if "simulation_3planes" in scenedir else os.path.join(scenedir, f"rectify_map_{side}.h5")
+    return ea, _frame_ts_s(tss_path), rmap
 
 
 def _load_fpv(scenedir: str) -> tuple:
     from ms_model.io.loaders import load_events_fpv
     tss_path = os.path.join(scenedir, "images_timestamps_us.txt")
     ea = load_events_fpv(scenedir, H=260, W=346)
-    return ea, _frame_ts_s(tss_path)
+    return ea, _frame_ts_s(tss_path), os.path.join(scenedir, "rectify_map.h5")
 
 
 def _load_hku(scenedir: str, side: str = "left") -> tuple:
@@ -65,7 +95,7 @@ def _load_hku(scenedir: str, side: str = "left") -> tuple:
     h5_path = os.path.join(scenedir, f"evs_{side}.h5")
     tss_path = os.path.join(scenedir, f"tss_imgs_us_{side}.txt")
     ea = load_events_prophesee_h5(h5_path, H=260, W=346)
-    return ea, _frame_ts_s(tss_path)
+    return ea, _frame_ts_s(tss_path), os.path.join(scenedir, f"rectify_map_{side}.h5")
 
 
 def _load_eds(scenedir: str) -> tuple:
@@ -73,7 +103,7 @@ def _load_eds(scenedir: str) -> tuple:
     h5_path = glob.glob(os.path.join(scenedir, "events.h5"))[0]
     tss_path = os.path.join(scenedir, "images_timestamps_us.txt")
     ea = load_events_prophesee_h5(h5_path, H=480, W=640)
-    return ea, _frame_ts_s(tss_path)
+    return ea, _frame_ts_s(tss_path), os.path.join(scenedir, "rectify_map_calib0.h5")
 
 
 def _load_mvsec(scenedir: str, side: str = "left") -> tuple:
@@ -82,7 +112,7 @@ def _load_mvsec(scenedir: str, side: str = "left") -> tuple:
     assert len(h5_files) == 1, f"Expected 1 MVSEC hdf5 in {scenedir}, found {h5_files}"
     tss_path = os.path.join(scenedir, f"tss_imgs_us_{side}.txt")
     ea = load_events_mvsec(h5_files[0], side=side, H=260, W=346)
-    return ea, _frame_ts_s(tss_path)
+    return ea, _frame_ts_s(tss_path), os.path.join(scenedir, f"rectify_map_{side}.h5")
 
 
 def _load_vector(scenedir: str, side: str = "left") -> tuple:
@@ -91,7 +121,7 @@ def _load_vector(scenedir: str, side: str = "left") -> tuple:
     h5_path = os.path.join(scenedir, f"{seq}1.synced.{side}_event.hdf5")
     tss_path = os.path.join(scenedir, f"tss_imgs_us_{side}.txt")
     ea = load_events_prophesee_h5(h5_path, H=480, W=640)
-    return ea, _frame_ts_s(tss_path)
+    return ea, _frame_ts_s(tss_path), os.path.join(scenedir, f"rectify_map_{side}.h5")
 
 
 def _load_tumvie(scenedir: str, camID: int = 2) -> tuple:
@@ -101,7 +131,7 @@ def _load_tumvie(scenedir: str, camID: int = 2) -> tuple:
     assert len(h5_files) == 1, f"Expected 1 TUM-VIE h5 in {scenedir}, found {h5_files}"
     tss_path = os.path.join(scenedir, f"{side}_images_undistorted", f"image_timestamps_{side}.txt")
     ea = load_events_prophesee_h5(h5_files[0], H=720, W=1280)
-    return ea, _frame_ts_s(tss_path)
+    return ea, _frame_ts_s(tss_path), os.path.join(scenedir, f"rectify_map_{side}.h5")
 
 
 # ---------------------------------------------------------------------------
@@ -144,14 +174,12 @@ def make_ms_factory(
 
     def factory(scene: str, datapath_val: str):
         print(f"[MS-factory/{dataset}] Chargement events pour '{scene}'…")
-        try:
-            ea, frame_ts_s = loader(datapath_val, side, camID)
-        except Exception as e:
-            print(f"[MS-factory/{dataset}] ERREUR chargement events : {e} → provider None")
-            return None
+        # Pas de repli silencieux : un provider None ferait passer DEVO vanilla pour la
+        # méthode apprise dans la table.
+        ea, frame_ts_s, rmap_path = loader(datapath_val, side, camID)
+        ea = rectify_events(ea, rmap_path)
         if len(ea) == 0:
-            print(f"[MS-factory/{dataset}] Pas d'events dans '{scene}' → provider None")
-            return None
+            raise RuntimeError(f"[MS-factory/{dataset}] aucun event dans '{scene}' ({datapath_val})")
         return _make_provider(ea, frame_ts_s, ms_weights, ms_config, threshold, device)
 
     return factory
