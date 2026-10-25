@@ -140,11 +140,18 @@ def run_methods(cfg, args, plans, devo_cfg):
     if _get(cfg, "export_map", False):
         common["map_path"] = str(Path(args.run_dir) / "map.ply")
 
+    # Score maps et patches par frame, pour les figures et l'app (utils/eval_dump.py) :
+    # seulement sur demande (`--set save_viz=true`), la sauvegarde ne change rien à l'ATE.
+    dump = bool(_get(cfg, "save_viz", False))
+
     ate, per_scene = {}, {}
     for method in METHOD_ORDER:
         if method not in plans:
             continue
         devo_weights, factory = plans[method]
+        if dump:
+            from utils.eval_dump import recording_factory
+            factory = recording_factory(factory, Path(args.run_dir) / "dumps", method)
         label = METHOD_LABELS[method]
         print(f"\n=== [table] {label} (DEVO={os.path.basename(devo_weights)}) ===", flush=True)
         args.expname = f"{method}_seed{args.seed}"

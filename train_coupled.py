@@ -21,6 +21,7 @@ import os
 import random
 import argparse
 from collections import OrderedDict
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -168,6 +169,31 @@ def _patch_scores(dyn_mask, patches, ix):
         return _sample_patch_scores(dyn_mask, patches, ix).view(-1).detach()
 
 
+def dump_patch_residuals(path, step, *, res_patch, dyn_mask, patches, ix, gt_dyn, scene_ids,
+                         selfsup_stats):
+    """Résidus DBA et scores par patch d'un pas, pour vérifier après coup que le résidu est
+    un bon signal de mouvement (M3) — cf. docs/viz_app.md §6.3. Rien n'est différentiable
+    ni réutilisé : c'est une photographie du pas, quelques dizaines de Ko.
+    """
+    p = patches.shape[-1]
+    out = {
+        "step": np.int64(step),
+        "res": res_patch.view(-1).float().cpu().numpy().astype(np.float16),        # (K,)
+        "dyn": _patch_scores(dyn_mask, patches, ix).float().cpu().numpy().astype(np.float16),
+        "patch_xy": patches[0, :, :2, p // 2, p // 2].float().cpu().numpy().astype(np.float16),
+        "ix": ix.view(-1).cpu().numpy().astype(np.int16),                           # frame du patch
+        "scene_ids": np.asarray([str(x) for x in scene_ids]),
+    }
+    out.update({k: np.float32(v) for k, v in selfsup_stats.items()})  # M3 : median, mad, threshold
+    if gt_dyn is not None:
+        gt = gt_dyn
+        if gt.shape[-2:] != dyn_mask.shape[-2:]:
+            gt = F.interpolate(gt, size=dyn_mask.shape[-2:], mode="nearest")
+        out["gt"] = (_patch_scores(gt, patches, ix) > 0.5).cpu().numpy()             # GT sous le patch
+    path.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path / f"step_{step:06d}.npz", **out)
+
+
 def log_coupled_step(logger, step, *, loss, pose_l, flow_l, mask_l, soft_prior,
                      dyn_mask, gt_dyn, unfrozen, dyn_patch_scores, selfsup_stats):
     """Métriques d'un pas couplé, préfixées par domaine.
@@ -263,7 +289,7 @@ def build_dataset(args):
         return EvimoClipDataset(
             npz_paths, n_frames=args.n_frames, nb_time_bins=args.nb_time_bins,
             patch_size=args.patch_size, depth_scale=args.depth_scale,
-            provide_gt_mask=args.provide_gt_mask, mask_thicken_radius=args.mask_thicken_radius,
+            provide_gt_mask=args.provide_gt_mask or args.diag_gt_mask, mask_thicken_radius=args.mask_thicken_radius,
             mask_motion=args.mask_motion, motion_thresh_m=args.motion_thresh_m,
             motion_window_s=args.motion_window_s)
     return dataset_factory(['tartan_evs'], datapath=args.datapath, n_frames=args.n_frames,
@@ -302,6 +328,8 @@ def train_coupled(args):
     # Les diagnostics par patch (ω, seuil selfsup) ne sont calculés par eVONet que pour le
     # sélecteur « scorer ».
     want_diag = args.patch_selector.lower() == "scorer"
+    load_gt = args.provide_gt_mask or args.diag_gt_mask
+    dump_dir = Path(args.run_dir or args.outdir) / "residuals"
 
     logger = RunLogger(
         "train_coupled", vars(args),
@@ -334,8 +362,9 @@ def train_coupled(args):
             return
     while total_steps < args.steps:
         for blob in loader:
-            blob.pop()  # scene_id (str)
-            gt_dyn = blob.pop().to(device).float() if args.provide_gt_mask else None  # (B,n,Hp,Wp)
+            scene_ids = blob.pop()  # (B,) str
+            # GT chargé pour la loss de M2, ou en simple diagnostic (M3 : jamais dans la loss)
+            gt_dyn = blob.pop().to(device).float() if load_gt else None  # (B,n,Hp,Wp)
             images, poses, disps, intrinsics = [x.to(device).float() for x in blob]
 
             if (not unfrozen) and total_steps >= args.freeze_devo_steps:
@@ -387,7 +416,7 @@ def train_coupled(args):
                 selfsup_stats["pos_frac"] = float(target.mean())
                 mask_l = F.binary_cross_entropy(dyn_patch.clamp(1e-6, 1 - 1e-6), target)
                 loss = loss + args.mask_weight * mask_l
-            elif gt_dyn is not None and args.mask_weight > 0:
+            elif args.provide_gt_mask and gt_dyn is not None and args.mask_weight > 0:
                 # M2 supervisé : garde le masque calibré vs GT dynamique
                 gt = gt_dyn
                 if gt.shape[-2:] != dyn_mask.shape[-2:]:
@@ -423,6 +452,10 @@ def train_coupled(args):
                                  dyn_mask=dyn_mask, gt_dyn=gt_dyn, unfrozen=unfrozen,
                                  dyn_patch_scores=_patch_scores(dyn_mask, patches_out, ix_out),
                                  selfsup_stats=selfsup_stats)
+            if args.dump_every and total_steps % args.dump_every == 0 and res_patch is not None:
+                dump_patch_residuals(dump_dir, total_steps, res_patch=res_patch, dyn_mask=dyn_mask,
+                                     patches=patches_out, ix=ix_out, gt_dyn=gt_dyn,
+                                     scene_ids=scene_ids, selfsup_stats=selfsup_stats)
             if logger.should_log_images(total_steps):
                 log_coupled_images(logger, total_steps, images, dyn_mask, gt_dyn,
                                    _patch_scores(dyn_mask, patches_out, ix_out),
@@ -454,6 +487,9 @@ if __name__ == "__main__":
                    help='id du run wandb à reprendre (reprise d\'un run interrompu)')
     p.add_argument('--images_every', type=int, default=500,
                    help='envoie voxels / masques / patches sur wandb tous les N steps (0 = jamais)')
+    p.add_argument('--dump_every', type=int, default=0,
+                   help='écrit résidus DBA et scores par patch dans <run-dir>/residuals/ tous '
+                        'les N steps (0 = jamais)')
     p.add_argument('--resume', default=None,
                    help='coupled_step<K>.pt depuis lequel reprendre (modèles + optimiseur + '
                         'compteur de steps) ; jobs/train_coupled.sh le remplit tout seul')
@@ -475,7 +511,10 @@ if __name__ == "__main__":
     p.add_argument('--patch_size', type=int, default=4)
     p.add_argument('--depth_scale', type=float, default=1000.0, help='depth EVIMO en mm -> m')
     p.add_argument('--provide_gt_mask', action='store_true', help='loss masque supervisée (M2 sup.)')
-    p.add_argument('--mask_thicken_radius', type=int, default=3)
+    p.add_argument('--diag_gt_mask', action='store_true',
+                   help='charge le masque GT pour les diagnostics seulement (IoU, GT sous les '
+                        'patches dans residuals/) ; n\'entre jamais dans la loss')
+    p.add_argument('--mask_thicken_radius', type=int, default=0)
     p.add_argument('--mask_motion', default="all", choices=["all", "sequence", "frame"],
                    help="masque GT = tous les objets annotés (all) ou seulement ceux qui bougent")
     p.add_argument('--motion_thresh_m', type=float, default=0.02,

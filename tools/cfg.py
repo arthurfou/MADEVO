@@ -79,6 +79,7 @@ def argv_coupled(cfg, cfg_path, run_dir_path, seed):
             "--save_every", str(_get(cfg, "train.save_every")),
             "--log_every", str(_get(cfg, "log.every")),
             "--images_every", str(_get(cfg, "log.images_every")),
+            "--dump_every", str(_get(cfg, "log.dump_every", 0) if _get(cfg, "save_viz", False) else 0),
             "--exp", str(_get(cfg, "exp")),
             "--run-dir", str(run_dir_path),
             "--mask_weight", str(_get(cfg, "loss.mask_weight")),
@@ -98,6 +99,8 @@ def argv_coupled(cfg, cfg_path, run_dir_path, seed):
     elif mode == "selfsup":
         args += ["--selfsup", "--selfsup_k", str(_get(cfg, "loss.selfsup_k")),
                  "--selfsup_min_res", str(_get(cfg, "loss.selfsup_min_res", 0.0))]
+        if _get(cfg, "log.diag_gt", False):
+            args += ["--diag_gt_mask"]  # GT pour les diagnostics, jamais dans la loss
     else:
         raise ValueError(f"loss.mode inconnu : '{mode}' (supervised | selfsup)")
 

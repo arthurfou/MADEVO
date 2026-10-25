@@ -129,13 +129,19 @@ def run_voxel(voxeldir, cfg, network, viz=False, iterator=None, timing=False, H=
             visualize_voxel(voxel.detach().cpu())
 
         dyn_score = None if dyn_mask_provider is None else dyn_mask_provider(t)
+        if hasattr(dyn_mask_provider, "before_frame"):  # utils/eval_dump.RecordingProvider
+            dyn_mask_provider.before_frame(slam)
         with Timer("DEVO", enabled=timing):
             slam(t, voxel, intrinsics, scale=scale, dyn_score=dyn_score)
+        if hasattr(dyn_mask_provider, "after_frame"):
+            dyn_mask_provider.after_frame(slam)
 
     for _ in range(12):
         slam.update()
 
     poses, tstamps = slam.terminate()
+    if hasattr(dyn_mask_provider, "finish"):
+        dyn_mask_provider.finish()
 
     if timing:
         t1.record()

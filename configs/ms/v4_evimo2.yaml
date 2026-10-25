@@ -40,7 +40,7 @@ data:
   seq_len: 16
   nb_time_bins: 5
   patch_size: 4
-  mask_thicken_radius: 3
+  mask_thicken_radius: 1      # 1 px autour des objets, comme l'oracle (25/10)
   # Définition de « dynamique » dans le masque GT, choisie en T7 sur le split train
   # (docs/mask_motion.md) : un objet est dynamique à l'instant t s'il s'écarte de plus
   # de 1 cm de sa position médiane dans la fenêtre [t − 0,1 s, t + 0,1 s].

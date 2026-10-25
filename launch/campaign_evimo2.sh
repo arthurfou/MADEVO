@@ -13,6 +13,7 @@
 #   launch/campaign_evimo2.sh --launcher local --gpus 0,1,2,3 [--seeds 1-5] [--cross]
 #   launch/campaign_evimo2.sh --launcher slurm [--seeds 1-5] [--cross]
 #   options : --phases 1,2,3,4 (défaut : toutes)  --resume <id>  --dry-run  --sbatch "<opts>"
+#             --save-viz (sauvegardes de visualisation des couplés et des tables, cf. save_viz)
 #
 #   --launcher local  une file de tâches sur les GPU listés, phase par phase (à lancer dans
 #                     un tmux : `tmux new -s campagne 'launch/campaign_evimo2.sh …'`)
@@ -23,6 +24,9 @@
 #                     run échoue annule ses runs dépendants (--kill-on-invalid-dep=yes) :
 #                     corriger, puis relancer avec --resume.
 #   --dry-run         affiche le plan et vérifie que toutes les configs se résolvent
+#   --save-viz        ajoute `--set save_viz=true` aux couplés et aux tables : résidus DBA par
+#                     patch (runs/…/residuals/) et score maps + patches par frame
+#                     (evals_out/…/dumps/). À repasser avec --resume.
 #
 # Tous les runs d'une campagne partagent un même launch_id (= <id>), donc les dossiers de
 # sortie sont prévisibles : runs/<exp>/<id>/seed<N>/, evals_out/<dataset>/<sources>/<id>/seed<N>/.
@@ -33,7 +37,7 @@ source "$REPO_ROOT/launch/_seeds.sh"
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { log "ERREUR : $*" >&2; exit 1; }
 
-LAUNCHER="" SEEDS_SPEC="1-5" GPUS="0" PHASES="1,2,3,4" CROSS=0 DRY_RUN=0 RESUME_ID="" EXTRA_SBATCH=""
+LAUNCHER="" SEEDS_SPEC="1-5" GPUS="0" PHASES="1,2,3,4" CROSS=0 DRY_RUN=0 RESUME_ID="" EXTRA_SBATCH="" SAVE_VIZ=0
 while (( $# )); do
     case "$1" in
         --launcher) LAUNCHER="${2:?}"; shift ;;
@@ -41,6 +45,7 @@ while (( $# )); do
         --gpus) GPUS="${2:?}"; shift ;;
         --phases) PHASES="${2:?}"; shift ;;
         --cross) CROSS=1 ;;
+        --save-viz) SAVE_VIZ=1 ;;
         --resume) RESUME_ID="${2:?}"; shift ;;
         --sbatch) EXTRA_SBATCH="${2:?}"; shift ;;
         --dry-run) DRY_RUN=1 ;;
@@ -94,6 +99,7 @@ task_args() {  # task_args "<tâche>" → job, config, --set …
     IFS='|' read -r job cfg sets <<< "$1"
     TASK_JOB="jobs/$job.sh"; TASK_CFG="$cfg"; TASK_SETS=()
     for s in $sets; do TASK_SETS+=(--set "$s"); done
+    if (( SAVE_VIZ )) && [[ "$job" != train_ms ]]; then TASK_SETS+=(--set save_viz=true); fi
 }
 task_name() {  # nom lisible et unique pour les journaux
     local job cfg sets
@@ -103,7 +109,7 @@ task_name() {  # nom lisible et unique pour les journaux
 
 print_plan() {
     local p name t
-    echo "campagne   : $CAMPAIGN_ID ($LAUNCHER, seeds ${SEEDS[*]}$( (( CROSS )) && echo ", cross-dataset"))"
+    echo "campagne   : $CAMPAIGN_ID ($LAUNCHER, seeds ${SEEDS[*]}$( (( CROSS )) && echo ", cross-dataset")$( (( SAVE_VIZ )) && echo ", save-viz"))"
     echo "journaux   : $CLOG"
     for p in 1 2 3; do
         phase_on "$p" || continue

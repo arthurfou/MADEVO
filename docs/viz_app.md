@@ -1,6 +1,6 @@
 # Interface de visualisation MADEVO (T14) — note de conception
 
-**État : rien n'est construit, rien n'est décidé.** Cette note dit quoi construire, dans quel
+**État (25/10) : l'app n'est pas construite ; les sauvegardes du §6.1 à 6.3 sont implémentées (score maps et patches par frame via `utils/eval_dump.py`, résidus des couplés dans `residuals/`), **désactivées par défaut** et activées par `--set save_viz=true` ou `launch/campaign_evimo2.sh --save-viz` ; l'`artifacts.yaml` du §6.4 est écarté — l'app cherchera les fichiers par motif.** Restent les décisions du §10, sauf la 1 et la 2 (tranchées : sur demande, par un flag). Cette note dit quoi construire, dans quel
 ordre, et surtout **ce que la campagne doit écrire en plus dès maintenant** pour que l'app
 soit possible plus tard. Ce dernier point est urgent : une fois les 5 seeds lancées, ajouter
 un artefact veut dire tout relancer sur GPU.
@@ -296,7 +296,7 @@ papier est impossible** sans relancer DEVO sur GPU — alors que le papier la d�
 - **Où** : `runs/<exp>/<id>/seed<N>/selfsup/step_<K>.npz`, tous les `log.images_every` pas.
 - **Taille** : négligeable.
 
-### 6.4 Index d'éval — 🟡 confort, mais évite un piège réel
+### 6.4 Index d'éval — 🟡 confort, mais évite un piège réel — *écarté le 25/10*
 
 ⚠️ **Piège mesuré** : `utils/eval_utils.py::make_outfolder` construit son chemin avec
 `datetime.today()`, **pas** avec le `LAUNCH_ID` du job. Le dossier des trajectoires est donc

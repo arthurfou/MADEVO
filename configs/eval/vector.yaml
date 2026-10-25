@@ -17,4 +17,5 @@ methods: [vanilla, m1, m2, m3]
 sources: evimo2                         # mêmes checkpoints que la table EVIMO2 nominale
 
 threshold: null                         # null = score continu, sinon seuil binaire
+save_viz: false                                # --set save_viz=true : score maps et patches par frame
 export_map: false

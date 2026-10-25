@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import sys
 from pathlib import Path
@@ -184,10 +185,9 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
         lr=train_cfg["lr"],
         weight_decay=train_cfg.get("weight_decay", 0.0),
     )
-    # ⚠️ Construit mais JAMAIS appelé : dans le code du stage, `scheduler.step()` ne se
-    # trouvait que dans la branche EV-IMO (supprimée), donc tous les runs MS ConvLSTM ont
-    # tourné à LR constant malgré `use_scheduler: true`. Comportement laissé tel quel pour
-    # ne pas changer la référence en douce ; à trancher avec les hyperparamètres de T7.
+    # Cosine sur toute la durée, avancé une fois par epoch. Dans le code du stage,
+    # `scheduler.step()` ne figurait que dans la branche EV-IMO : tous les runs MS ConvLSTM
+    # du stage ont tourné à LR constant malgré `use_scheduler: true` (INTEGRITY_CHECK point 7).
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=train_cfg["epochs"]
     ) if train_cfg.get("use_scheduler", False) else None
@@ -206,6 +206,13 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
         model.load_state_dict(resume_ckpt["model"])
         optimizer.load_state_dict(resume_ckpt["optimizer"])
         start_epoch = resume_ckpt["epoch"] + 1
+        if scheduler is not None:
+            # Le cosine est une fonction de l'epoch : on le recale par sa forme close plutôt
+            # qu'en restaurant son état, qui garderait l'ancien T_max si `epochs` a changé.
+            for g in optimizer.param_groups:
+                g["initial_lr"] = train_cfg["lr"]
+                g["lr"] = train_cfg["lr"] * (1 + math.cos(math.pi * start_epoch / train_cfg["epochs"])) / 2
+            scheduler.last_epoch = start_epoch
         best_val_loss = resume_ckpt["best_val_loss"]
         best_val_iou = resume_ckpt.get("best_val_iou", 0.0)
         wandb_run_id = resume_ckpt.get("wandb_run_id")
@@ -233,6 +240,9 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
     for epoch in range(start_epoch, train_cfg["epochs"]):
         want_images = logger.should_log_images(epoch)
         train_metrics = run_epoch(model, train_loader, loss_fn, device, optimizer)
+        lr = optimizer.param_groups[0]["lr"]  # LR effectivement utilisé pendant cet epoch
+        if scheduler is not None:
+            scheduler.step()
         val_out = run_epoch(model, val_loader, loss_fn, device, keep_sample=want_images)
         val_metrics, val_sample = val_out if want_images else (val_out, None)
 
@@ -244,7 +254,7 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
             "ms/val/loss":     val_metrics["loss"],
             "ms/val/iou":      val_metrics["iou"],
             "ms/val/pos_frac": val_metrics["pos_frac"],
-            "ms/lr":           optimizer.param_groups[0]["lr"],
+            "ms/lr":           lr,
         }, step=epoch)
 
         if val_sample is not None:
@@ -258,7 +268,7 @@ def main(config_path: str, data_root_override: str = None, wandb_name_override: 
             logger.log_histogram("ms/val/score_hist", val_sample["pred"], step=epoch)
 
         print(f"epoch {epoch}: train_loss={train_metrics['loss']:.4f} train_iou={train_metrics['iou']:.4f} "
-              f"val_loss={val_metrics['loss']:.4f} val_iou={val_metrics['iou']:.4f}", flush=True)
+              f"val_loss={val_metrics['loss']:.4f} val_iou={val_metrics['iou']:.4f} lr={lr:.2e}", flush=True)
 
         val_loss = val_metrics["loss"]
         val_iou = val_metrics["iou"]

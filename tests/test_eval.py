@@ -128,6 +128,7 @@ def test_manifest_signale_un_checkpoint_manquant(faux_runs):
 
 
 def _ecrit_config_run(run_dir, **data):
+    data.setdefault("mask_thicken_radius", 1)  # celle des configs de la campagne
     (Path(run_dir) / "config.yaml").write_text(yaml.safe_dump({"data": data}))
 
 
@@ -155,6 +156,18 @@ def test_oracle_et_entrainement_doivent_avoir_le_meme_masque(faux_runs):
     pb = mask_definition_mismatches(eval_manifest(cfg, 1, sources, ms_arch))
     assert [m.split(" ")[0] for m in pb] == ["m2", "m3"]
     assert "mask_motion" in pb[0] and "motion_thresh_m" in pb[1]
+
+
+def test_oracle_et_entrainement_doivent_avoir_la_meme_dilatation(faux_runs):
+    cfg = _eval_cfg()
+    sources, ms_arch = resolve_eval_sources(cfg, seed=1)
+    mask = {k: cfg["oracle"][k] for k in ("mask_motion", "motion_thresh_m", "motion_window_s")}
+    _ecrit_config_run(sources["m1"]["run_dir"], **mask, mask_thicken_radius=1)
+    _ecrit_config_run(sources["m2"]["run_dir"], **mask, mask_thicken_radius=3)
+    _ecrit_config_run(sources["m3"]["run_dir"], **mask, mask_thicken_radius=0)
+    pb = mask_definition_mismatches(eval_manifest(cfg, 1, sources, ms_arch))
+    assert [m.split(" ")[0] for m in pb] == ["m2", "m3"]
+    assert all("thicken_radius" in m for m in pb)
 
 
 def test_mode_all_ignore_seuil_et_fenetre(faux_runs):
@@ -256,7 +269,9 @@ def test_les_deux_providers_appliquent_le_correctif_de_timestamps(tmp_path, monk
 # ------------------------------------------- définition du masque GT dans les configs
 
 def _mask_def(cfg, section):
-    return {k: cfg[section].get(k) for k in ("mask_motion", "motion_thresh_m", "motion_window_s")}
+    out = {k: cfg[section].get(k) for k in ("mask_motion", "motion_thresh_m", "motion_window_s")}
+    out["thicken"] = cfg[section].get("thicken_radius" if section == "oracle" else "mask_thicken_radius", 0)
+    return out
 
 
 @pytest.mark.parametrize("eval_cfg, trainings", [
@@ -285,3 +300,14 @@ def test_les_ablations_all_ecrivent_ailleurs_et_partent_du_ms_all():
         assert c["ms"]["init"] == "runs/v4_evimo2_all/@latest"
     ev = resolve_config(REPO_ROOT / "configs/eval/evimo2_all.yaml")
     assert ev["sources"] == "evimo2_all" and ev["exp"] != "eval_evimo2"
+
+
+@pytest.mark.parametrize("path", sorted((REPO_ROOT / "configs").glob("[mc]*/*.yaml"))
+                         + sorted((REPO_ROOT / "configs/eval").glob("evimo2*.yaml")))
+def test_meme_dilatation_de_1_px_partout(path):
+    """Entraînement MS, supervision M2 et oracle dilatent le masque GT de 1 px (25/10) :
+    l'oracle doit être exactement la cible apprise."""
+    cfg = resolve_config(path)
+    for section, key in (("data", "mask_thicken_radius"), ("oracle", "thicken_radius")):
+        if section in cfg:
+            assert cfg[section].get(key) == 1, f"{path.name} : {section}.{key}"

@@ -7,7 +7,7 @@ mouvement et la fenêtre du mode `frame` :
 1. l'écart au repos de chaque objet annoté (cm), sur la séquence et par fenêtre glissante —
    pour placer le seuil entre le bruit VICON des objets statiques et le mouvement réel ;
 2. pour chaque couple (seuil, fenêtre), la part de cellules positives à la résolution du MS
-   (H/patch × W/patch, après dilatation de `--thicken` px comme à l'entraînement), la part
+   (H/patch × W/patch, après dilatation de `--thicken` px, 1 comme à l'entraînement), la part
    de frames sans aucun positif, et le `pos_weight` équilibrant (négatifs / positifs).
 
 Les parts sont **poolées** sur toutes les frames du split (c'est ce que voit la loss), pas
@@ -72,7 +72,7 @@ def main() -> None:
     p.add_argument("--data-root", required=True)
     p.add_argument("--thresh", type=float, nargs="+", default=[0.005, 0.01, 0.02], help="seuils de mouvement (m)")
     p.add_argument("--window", type=float, nargs="+", default=[0.1, 0.2, 0.5], help="fenêtres du mode frame (s)")
-    p.add_argument("--thicken", type=int, default=3, help="dilatation des masques (px), comme mask_thicken_radius")
+    p.add_argument("--thicken", type=int, default=1, help="dilatation des masques (px), comme mask_thicken_radius")
     p.add_argument("--patch-size", type=int, default=4)
     p.add_argument("--stride", type=int, default=2, help="1 frame sur N (accélère)")
     p.add_argument("--out", help="écrit aussi le rapport markdown dans ce fichier")
@@ -93,6 +93,7 @@ def main() -> None:
     empty = dict.fromkeys(pos, 0)
     cells = frames = 0
     obj_rows = []
+    seq_rows = []  # par séquence, pour le premier couple (seuil, fenêtre) du mode `frame`
 
     emit(f"# Filtrage de mouvement des masques GT — `{args.data_root}`\n")
     emit(f"{len(sequences)} séquences, dilatation {args.thicken} px, patch {args.patch_size}, "
@@ -106,6 +107,8 @@ def main() -> None:
         spreads = {w: windowed_spreads(seq, ts, w) for w in args.window}
 
         annotated = set()
+        pos_before, cells_before = pos[("frame", *combos[0])], cells
+        empty_before = empty[("frame", *combos[0])]
         for i, m in enumerate(masks):
             occ = object_cells(m, args.thicken, args.patch_size)
             annotated |= occ.keys()
@@ -124,6 +127,9 @@ def main() -> None:
             for t, w in combos:
                 count(("frame", t, w), frame_moving[(t, w)][i])
 
+        seq_rows.append({"seq": seq.name.replace("_000000", ""), "frames": len(masks),
+                         "pos": (pos[("frame", *combos[0])] - pos_before) / max(cells - cells_before, 1),
+                         "empty": (empty[("frame", *combos[0])] - empty_before) / max(len(masks), 1)})
         tracks = _world_tracks(str(seq))
         for oid in sorted(tracks):
             if oid not in annotated:
@@ -165,6 +171,13 @@ def main() -> None:
         emit(row(f"sequence, {t * 100:g} cm", ("sequence", t)))
     for t, w in combos:
         emit(row(f"frame, {t * 100:g} cm, {w:g} s", ("frame", t, w)))
+
+    t0, w0 = combos[0]
+    emit(f"\n## Par séquence (frame, {t0 * 100:g} cm, {w0:g} s)\n")
+    emit("| séquence | frames | positifs | frames sans positif |")
+    emit("|---|---|---|---|")
+    for r in sorted(seq_rows, key=lambda r: -r["pos"]):
+        emit(f"| {r['seq']} | {r['frames']} | {r['pos']:.2%} | {r['empty']:.1%} |")
 
     if args.out:
         Path(args.out).write_text("\n".join(lines) + "\n")

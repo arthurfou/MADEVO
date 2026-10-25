@@ -29,7 +29,10 @@ python tools/mask_motion_stats.py --data-root datasets/evimo2/samsung_mono/imo/t
 Tables complètes : [`mask_motion_stats_train.md`](mask_motion_stats_train.md) (choix) et
 [`mask_motion_stats_eval.md`](mask_motion_stats_eval.md) (pour information seulement, le
 choix n'en dépend pas). Cellules à la résolution du MS (H/4 × W/4), masques dilatés de 3 px
-comme à l'entraînement, poolées sur toutes les frames (1 sur 2).
+(l'entraînement de l'époque), poolées sur toutes les frames (1 sur 2). **Depuis le 25/10, la
+dilatation est de 1 px partout** (voir « Dilatation » plus bas) : en `frame`, 1 cm, 0,2 s, la
+part de positifs passe de 2,00 % à **1,88 %** (neg/pos 52,1, √ ≈ 7,2) ; `all` 60,6 %,
+`sequence` 27,3 %. Le choix du mode et `loss_pos_weight: 7` n'en changent pas.
 
 **Split train** (21 séquences, 4745 frames) :
 
@@ -117,15 +120,46 @@ l'oracle des tables :
   définition du masque dans `manifest.yaml` et **refuse** d'évaluer si elle diffère de celle
   de l'oracle.
 
+## Dilatation : 1 px partout (25/10)
+
+Le stage dilatait le masque GT de 3 px à l'entraînement (MS et supervision M2) et de 2 px dans
+l'oracle des tables : l'oracle n'était donc pas exactement la cible apprise. Décision : **1 px
+partout** (`mask_thicken_radius: 1` dans les configs MS et couplées, `oracle.thicken_radius: 1`
+dans les évals, défaut 1 dans `tools/mask_motion_stats.py`), soit une petite marge autour des
+objets. Les events d'un objet mobile débordent un peu du masque pris à l'instant t (la voxel
+grid couvre une fenêtre de temps) ; au-delà, la marge sert surtout la visualisation. Mesuré
+sur le split train, en `frame` : 2,00 % de positifs à 3 px, 1,88 % à 1 px, 1,82 % à 0 px
+(un pixel est sous la taille d'une cellule, 4 px).
+
+`evals/eval_table.py` compare désormais aussi la dilatation de chaque run à celle de l'oracle
+(`thicken_radius`, une clé absente valant 0) et refuse d'évaluer si elles diffèrent ;
+`tests/test_eval.py` vérifie que toutes les configs dilatent de 1 px.
+
+## Validation et `loss_pos_weight` (25/10)
+
+- **`best_iou.pt` reste choisi sur le split d'éval** pour la campagne : mettre des séquences
+  du train de côté retirerait des données d'entraînement à un dataset déjà petit. Le biais
+  est connu et assumé ; pour le mesurer à coût nul, évaluer aussi `last.pt` (écrit à chaque
+  run) — avec le cosine, il doit être proche de `best_iou.pt`.
+- **Balayage de `loss_pos_weight`** ∈ {3, 7, 15}, seed 1, MS seul, **avant** la campagne, sur
+  `configs/ms/v4_evimo2_holdout.yaml` : 18 séquences d'entraînement, validation sur 3
+  séquences du train (scene10_dyn_train_02, scene14_dyn_test_02, scene13_dyn_test_01 : une par
+  scène, chaque scène gardant d'autres séquences à l'entraînement, positifs proches de la
+  moyenne). Ce split ne sert qu'à choisir la valeur ; la campagne réentraîne sur les 21.
+  Lecture : `python tools/ms_best_iou.py runs/v4_evimo2_pw*`. La valeur retenue va dans
+  `training.loss_pos_weight` des deux configs MS **et** dans `loss.mask_pos_weight` de
+  `configs/coupled/_base_evimo2.yaml`. Part de positifs par séquence :
+  `tools/mask_motion_stats.py` (section « Par séquence »).
+- Variantes scratch : `soft_prior_target` passe de 0,1 (réglé pour `all`) à **0,02**, la part
+  réelle de positifs en `frame`.
+
 ## Points ouverts
 
 - `val_sequences` des configs MS = les 8 séquences d'éval. `best_iou.pt` est donc choisi
-  sur le split de test des tables. Pour le papier, il faudrait une validation tirée du
-  train.
-- L'oracle des tables dilate de 2 px, l'entraînement de 3 px : c'est l'héritage du stage,
-  non tranché ici.
-- Variantes scratch : `soft_prior_target: 0.1` (moyenne visée du masque) a été fixé pour
-  `all`. En `frame`, le taux réel est de 2 à 4 %.
+  sur le split de test des tables — **assumé le 25/10**, voir plus haut.
+- ~~L'oracle des tables dilate de 2 px, l'entraînement de 3 px.~~ **Tranché le 25/10 : 1 px
+  partout**, voir plus haut.
+- ~~Variantes scratch : `soft_prior_target: 0.1` fixé pour `all`.~~ **0,02 depuis le 25/10.**
 - Avec `frame`, 66 % des frames n'ont aucun objet mobile, et l'oracle y vaut DEVO vanilla.
   Le gain de l'oracle mesurera donc l'effet des seuls vrais objets mobiles. Il sera
   probablement bien plus petit que les +41 % du stage (obtenus en masquant du décor), et

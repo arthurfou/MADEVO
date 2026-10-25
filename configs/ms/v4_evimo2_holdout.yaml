@@ -1,0 +1,41 @@
+# Balayage de `loss_pos_weight` (T10, avant la campagne) : même MS que v4_evimo2, mais
+# validé sur 3 séquences du train mises de côté, jamais sur le split d'éval des tables.
+# Les 3 séquences (une par scène, chaque scène garde d'autres séquences à l'entraînement)
+# ont une part de positifs proche de la moyenne du train (1,9 % en `frame`, 1 cm, 0,2 s) :
+# scene10_dyn_train_02 2,2 %, scene14_dyn_test_02 2,0 %, scene13_dyn_test_01 1,0 % ;
+# 11 % des frames. Le balayage ne sert qu'à choisir la valeur : la campagne réentraîne
+# ensuite sur les 21 séquences (configs/ms/v4_evimo2.yaml).
+#
+# Lancement (une valeur = une expérience, seed 1) :
+#   for pw in 3 7 15; do
+#     launch/tmux.sh --seeds 1 jobs/train_ms.sh configs/ms/v4_evimo2_holdout.yaml \
+#       --set exp=v4_evimo2_pw$pw --set training.loss_pos_weight=$pw
+#   done
+#   python tools/ms_best_iou.py runs/v4_evimo2_pw*      # meilleure IoU de validation par valeur
+extends: v4_evimo2.yaml
+exp: v4_evimo2_holdout
+data:
+  train_sequences:
+    # 18 des 21 séquences IMO train
+    - imo/train/scene10_dyn_train_00_000000
+    - imo/train/scene10_dyn_train_01_000000
+    - imo/train/scene10_dyn_train_03_000000
+    - imo/train/scene10_dyn_train_04_000000
+    - imo/train/scene12_dyn_test_00_000000
+    - imo/train/scene12_dyn_test_01_000000
+    - imo/train/scene13_dyn_test_02_000000
+    - imo/train/scene13_dyn_test_03_000000
+    - imo/train/scene14_dyn_test_00_000000
+    - imo/train/scene14_dyn_test_01_000000
+    - imo/train/scene15_dyn_test_00_000000
+    - imo/train/scene15_dyn_test_03_000000
+    - imo/train/scene15_dyn_test_04_000000
+    - imo/train/scene15_dyn_test_06_000000
+    - imo/train/scene6_dyn_train_03_000000
+    - imo/train/scene9_dyn_train_01_000000
+    - imo/train/scene9_dyn_train_02_000000
+    - imo/train/scene9_dyn_train_06_000000
+  val_sequences:
+    - imo/train/scene10_dyn_train_02_000000
+    - imo/train/scene14_dyn_test_02_000000
+    - imo/train/scene13_dyn_test_01_000000

@@ -15,7 +15,7 @@ data:
   seq_len: 8
   nb_time_bins: 5
   patch_size: 4
-  mask_thicken_radius: 3
+  mask_thicken_radius: 1      # 1 px autour des objets, comme l'oracle (25/10)
   mask_motion: frame
   motion_thresh_m: 0.01
   motion_window_s: 0.2

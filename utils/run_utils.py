@@ -255,7 +255,9 @@ def _run_mask_definition(run_dir) -> dict | None:
     if not path.exists():
         return None
     data = load_yaml(path).get("data", {})
-    return {k: data.get(k) for k in MASK_DEF_KEYS}
+    out = {k: data.get(k) for k in MASK_DEF_KEYS}
+    out["thicken_radius"] = data.get("mask_thicken_radius", 0)
+    return out
 
 
 def _relevant_mask_keys(mode) -> tuple[str, ...]:
@@ -281,6 +283,9 @@ def mask_definition_mismatches(manifest) -> list[str]:
             continue
         keys = _relevant_mask_keys(oracle.get("mask_motion"))
         diff = {k: (trained.get(k), oracle.get(k)) for k in keys if trained.get(k) != oracle.get(k)}
+        # Dilatation : l'oracle doit être exactement la cible que le MS a apprise.
+        if "thicken_radius" in trained and trained["thicken_radius"] != oracle.get("thicken_radius", 0):
+            diff["thicken_radius"] = (trained["thicken_radius"], oracle.get("thicken_radius", 0))
         if diff:
             out.append(f"{method} : " + ", ".join(f"{k} entraînement={a!r} oracle={b!r}"
                                                   for k, (a, b) in diff.items()))
