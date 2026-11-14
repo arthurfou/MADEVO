@@ -379,8 +379,14 @@ def train_coupled(args):
             poses_w2c = SE3(poses).inv()
 
             # masque dynamique dense (B, n, Hp, Wp) dans [0,1], différentiable
-            dyn_logits = ms(images)                       # (B, n, 1, Hp, Wp)
-            dyn_mask = torch.sigmoid(dyn_logits)[:, :, 0]  # (B, n, Hp, Wp)
+            if args.no_ms:
+                # Contrôle « DEVO fine-tuné sans MS » : masque nul, donc score map et BA
+                # strictement vanilla (facteurs 1 − 0) ; même boucle, mêmes données.
+                with torch.no_grad():
+                    dyn_mask = torch.zeros_like(ms(images)[:, :, 0])
+            else:
+                dyn_logits = ms(images)                       # (B, n, 1, Hp, Wp)
+                dyn_mask = torch.sigmoid(dyn_logits)[:, :, 0]  # (B, n, Hp, Wp)
 
             # `return_selfsup` n'ajoute que des diagnostics DÉTACHÉS (résidu par patch,
             # patches, index de frame) : ni la loss ni le graphe ne changent. On les
@@ -524,6 +530,8 @@ if __name__ == "__main__":
     p.add_argument('--mask_weight', type=float, default=1.0, help='poids loss masque (supervisée ou auto-sup.)')
     p.add_argument('--mask_pos_weight', type=float, default=1.0,
                    help='M2 : poids des patches dynamiques dans la BCE (1 = stage, cf. T7)')
+    p.add_argument('--no_ms', action='store_true',
+                   help='contrôle : DEVO fine-tuné seul, masque nul (ni M2 ni M3)')
     # M3 auto-supervisé (sans GT) : masque supervisé par le résidu de la DBA
     p.add_argument('--selfsup', action='store_true',
                    help='M3 : supervise le masque par le résidu DBA (incohérence rigide), sans GT')

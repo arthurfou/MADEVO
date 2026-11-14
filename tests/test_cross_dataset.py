@@ -143,10 +143,16 @@ def _write_tables(d, mean, per_scene):
 
 def test_non_regression_evimo2(tmp_path):
     refs = yaml.safe_load((REPO_ROOT / "configs/nonregression.yaml").read_text())
-    _write_tables(tmp_path / "ok", 2.80, {})
+    _write_tables(tmp_path / "ok", 2.70, {})     # une passe haute mais dans 2 σ
     _write_tables(tmp_path / "ko", 3.40, {})
     assert all(r[4] for r in check_nonregression.check(tmp_path / "ok", refs["evimo2"]))
     assert not all(r[4] for r in check_nonregression.check(tmp_path / "ko", refs["evimo2"]))
+    # sur 4 seeds la tolérance se resserre : 2,70 de moyenne n'est plus acceptable
+    seeds = []
+    for i in range(4):
+        _write_tables(tmp_path / f"s{i}", 2.70, {})
+        seeds.append(tmp_path / f"s{i}")
+    assert not all(r[4] for r in check_nonregression.check(seeds, refs["evimo2"]))
 
 
 def test_non_regression_rpg_par_scene(tmp_path):

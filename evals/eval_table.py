@@ -287,6 +287,8 @@ def main():
         False, True, False, False, False
     args.outdir = str(args.run_dir)
     args.expname = ""
+    args.val_split = str(_get(cfg, "dataset.split"))
+    args.trials = int(_get(cfg, "trials", 1))
     assert_eval_config(args)
 
     plans = build_factories(cfg, sources, ms_arch, device=args.device)

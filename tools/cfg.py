@@ -101,8 +101,10 @@ def argv_coupled(cfg, cfg_path, run_dir_path, seed):
                  "--selfsup_min_res", str(_get(cfg, "loss.selfsup_min_res", 0.0))]
         if _get(cfg, "log.diag_gt", False):
             args += ["--diag_gt_mask"]  # GT pour les diagnostics, jamais dans la loss
+    elif mode == "none":
+        args += ["--no_ms"]  # contrôle : DEVO fine-tuné sans masque
     else:
-        raise ValueError(f"loss.mode inconnu : '{mode}' (supervised | selfsup)")
+        raise ValueError(f"loss.mode inconnu : '{mode}' (supervised | selfsup | none)")
 
     beta = float(_get(cfg, "loss.soft_prior_beta", 0.0))
     if beta:

@@ -1,0 +1,4 @@
+# M1 sur le dernier checkpoint MS (last.pt) au lieu de best_iou.pt : mesure le biais du choix
+# de best_iou.pt sur le split d'éval (décision du 25/10, HANDOFF.md).
+ms_arch: configs/ms/v4_evimo2.yaml
+m1: {ms: runs/v4_evimo2/@latest, ckpt: last.pt}

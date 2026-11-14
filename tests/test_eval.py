@@ -88,6 +88,20 @@ def test_sources_resout_les_checkpoints_de_la_bonne_seed(faux_runs):
     assert sources["m1"]["devo"] is None, "M1 ne change pas les poids DEVO"
 
 
+def test_sources_step_evalue_un_checkpoint_intermediaire(faux_runs, tmp_path):
+    """`step: N` (run coupé avant la fin) : les poids du step N, sans exiger DONE."""
+    import shutil
+    shutil.copytree(REPO_ROOT / "configs", tmp_path / "configs")
+    (tmp_path / "configs/eval/sources/partiel.yaml").write_text(
+        "ms_arch: configs/ms/v4_evimo2.yaml\n"
+        "m1: {ms: runs/v4_evimo2/@latest, ckpt: best_iou.pt}\n"
+        "m2: {coupled: runs/m2_evimo2/2026-11-01_0900, step: 30000}\n")
+    sources, _ = resolve_eval_sources(
+        _eval_cfg(sources="partiel", methods=["vanilla", "m1", "m2"]), seed=1, repo_root=tmp_path)
+    assert sources["m2"]["devo"].name == "devo_step30000.pth"
+    assert sources["m2"]["ms"].name == "ms_step30000.pt"
+
+
 def test_methods_pilote_les_checkpoints_charges(faux_runs):
     sources, _ = resolve_eval_sources(_eval_cfg(methods=["vanilla", "oracle", "m1"]), seed=1)
     assert set(sources) == {"m1"}, "ni M2 ni M3 ne doivent être chargés"

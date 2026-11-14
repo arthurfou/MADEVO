@@ -52,7 +52,10 @@ job_setup_env() {
             [[ -f "$hook" ]] && { source "$hook"; break; }
         done
         command -v conda > /dev/null || die "conda introuvable (voir README §Setup)"
+        # Les scripts d'activation de conda (binutils, gcc) lisent des variables non définies.
+        set +u
         conda activate "$CONDA_ENV" || die "env conda '$CONDA_ENV' introuvable"
+        set -u
     fi
     # shellcheck disable=SC1091
     [[ -f "$REPO_ROOT/paths.env" ]] && source "$REPO_ROOT/paths.env"

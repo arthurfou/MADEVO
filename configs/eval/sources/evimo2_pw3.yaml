@@ -1,0 +1,6 @@
+# Variante pos_weight=3 (vainqueur du balayage du 11/11) : MS et couplés entraînés avec
+# training.loss_pos_weight=3 / loss.mask_pos_weight=3, sous des exp suffixées _pw3.
+ms_arch: configs/ms/v4_evimo2.yaml
+m1: {ms: runs/v4_evimo2_pw3/@latest, ckpt: best_iou.pt}
+m2: {coupled: runs/m2_evimo2_pw3/@latest}
+m3: {coupled: runs/m3_evimo2_pw3/@latest}

@@ -1,0 +1,3 @@
+# Variante pos_weight=3 de evimo2_last.yaml : M1 sur last.pt.
+ms_arch: configs/ms/v4_evimo2.yaml
+m1: {ms: runs/v4_evimo2_pw3/@latest, ckpt: last.pt}

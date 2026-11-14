@@ -54,7 +54,7 @@ model:
 
 training:
   epochs: 100
-  batch_size: 8
+  batch_size: 4          # 8 dépasse 24 Go en hidden 128 (OOM sur A5000, 13/11) ; nominal : 8
   lr: 1.0e-3
   weight_decay: 1.0e-4
   use_scheduler: true

@@ -109,7 +109,10 @@ if want env; then
         $SOLVER env create -n "$ENV_NAME" -f environment.yml
     fi
 fi
+# Les scripts d'activation de conda (binutils, gcc) lisent des variables non définies.
+set +u
 conda activate "$ENV_NAME" || die "env $ENV_NAME introuvable (étape env)"
+set -u
 # evo applique son plot_backend (Qt5Agg par défaut) à l'import : sans Qt, utils/ ne s'importe pas.
 if [[ "$(python -c "from evo.tools.settings import SETTINGS; print(SETTINGS.plot_backend)" 2> /dev/null || true)" == Qt* ]]; then
     log "[env] evo : plot_backend → Agg (serveur sans affichage)"
@@ -191,16 +194,17 @@ fi
 
 # ------------------------------------------------------------------------ nonreg
 if want nonreg; then
-    export SEED=1
+    # DEVO n'est pas déterministe sur GPU : on compare la moyenne de plusieurs seeds.
     run_nonreg() {  # run_nonreg <dataset>
-        local ds=$1 dir
-        log "[nonreg] DEVO vanilla sur $ds"
-        LAUNCH_ID="$(date +%Y-%m-%d_%H%M)" jobs/eval_table.sh "configs/eval/$ds.yaml" \
-            --set 'methods=[vanilla]' --set sources=none --set "exp=nonreg_$ds"
-        dir=$(find "${MADEVO_EVALS:-$REPO_ROOT/evals_out}/$ds/none" -name central_table.csv -printf '%T@ %h\n' \
-              | sort -n | tail -n 1 | cut -d' ' -f2)
-        [[ -n "$dir" ]] || die "[nonreg] pas de table produite pour $ds"
-        python tools/check_nonregression.py "$dir" --dataset "$ds"
+        local ds=$1 lid seed
+        lid="$(date +%Y-%m-%d_%H%M)"
+        log "[nonreg] DEVO vanilla sur $ds, seeds ${NONREG_SEEDS:-1 2 3}"
+        for seed in ${NONREG_SEEDS:-1 2 3}; do
+            SEED=$seed LAUNCH_ID=$lid jobs/eval_table.sh "configs/eval/$ds.yaml" \
+                --set 'methods=[vanilla]' --set sources=none --set "exp=nonreg_$ds"
+        done
+        python tools/check_nonregression.py \
+            "${MADEVO_EVALS:-$REPO_ROOT/evals_out}/$ds/none/$lid"/seed* --dataset "$ds"
     }
     run_nonreg evimo2
     (( CROSS )) && run_nonreg rpg

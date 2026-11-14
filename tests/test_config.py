@@ -172,8 +172,12 @@ def test_chaque_config_se_resout(path):
 @pytest.mark.parametrize("path", [p for p in ALL_CONFIGS if p.parent.name == "coupled"],
                          ids=lambda p: p.stem)
 def test_budget_couple_conforme_a_la_decision(path):
-    """40 000 steps, dégel de DEVO à 10 000 : décision arrêtée pour le papier."""
+    """40 000 steps, dégel de DEVO à 10 000 : décision arrêtée pour le papier.
+    Le contrôle sans MS (`loss.mode: none`) garde le même nombre de pas DEVO dégelé, 30 000."""
     cfg = run_utils.resolve_config(path)
+    if cfg["loss"]["mode"] == "none":
+        assert (cfg["train"]["steps"], cfg["train"]["freeze_devo_steps"]) == (30000, 0)
+        return
     assert cfg["train"]["steps"] == 40000
     assert cfg["train"]["freeze_devo_steps"] == 10000
     assert cfg["loss"]["mode"] in ("supervised", "selfsup")

@@ -1,0 +1,11 @@
+# Contrôle : DEVO fine-tuné sur EVIMO2 SANS MS (masque nul, `--no_ms`), pour séparer l'effet
+# du fine-tuning de celui du masque dans M2/M3 (14/11). Même nombre de pas DEVO dégelé que
+# M2/M3 (40k − 10k gelés = 30k), sans la phase gelée, qui n'entraînerait rien sans MS.
+# Éval : méthode `vanilla` avec --set devo.weights=<run>/checkpoints/devo_final.pth
+extends: _base_evimo2.yaml
+exp: devo_ft_evimo2
+loss:
+  mode: none
+train:
+  steps: 30000
+  freeze_devo_steps: 0

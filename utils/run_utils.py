@@ -236,8 +236,11 @@ def resolve_eval_sources(cfg, seed, repo_root: Path = None):
         ref = sources[method]["coupled"]
         run = Path(resolve_ref(ref, seed, root=root / "runs" if repo_root else None))
         ckpts = run / "checkpoints"
+        # `step: N` évalue un checkpoint intermédiaire (run interrompu) au lieu du final
+        step = sources[method].get("step")
+        tag = "final" if step is None else f"step{int(step)}"
         out[method] = {"ref": str(ref), "run_dir": run,
-                       "devo": ckpts / "devo_final.pth", "ms": ckpts / "ms_final.pt"}
+                       "devo": ckpts / f"devo_{tag}.pth", "ms": ckpts / f"ms_{tag}.pt"}
     return out, ms_arch
 
 
