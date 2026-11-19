@@ -19,7 +19,7 @@ import yaml
 from conftest import REPO_ROOT
 from ms_model.io.events import EventArray
 from ms_model.training.train import training_sequences
-from utils.ms_dataset_factory import make_ms_factory, rectify_events
+from utils.ms_dataset_factory import H5EventWindows, make_ms_factory, rectify_events
 from utils.run_utils import (EVAL_DATASETS, ORACLE_DATASETS, eval_config_errors, eval_manifest,
                              resolve_config, resolve_eval_sources)
 
@@ -58,6 +58,61 @@ def test_rectify_events_refuse_une_carte_d_une_autre_resolution(tmp_path):
     ea = EventArray(events=np.zeros((1, 4)), H=12, W=16)
     with pytest.raises(AssertionError, match="rectification"):
         rectify_events(ea, str(_rmap(tmp_path / "r.h5", 10, 16)))
+
+
+def _prophesee_h5(path, t_us, x, y, p, t_offset):
+    """h5 au format DSEC/TUM-VIE : events/{t,x,y,p} + ms_to_idx (1er event à t >= ms·1000)."""
+    ms_to_idx = np.searchsorted(t_us, np.arange(0, t_us[-1] // 1000 + 2) * 1000, side="left")
+    with h5py.File(path, "w") as f:
+        for k, v in dict(t=t_us, x=x, y=y, p=p).items():
+            f.create_dataset(f"events/{k}", data=v)
+        f.create_dataset("ms_to_idx", data=ms_to_idx.astype(np.uint64))
+        f.create_dataset("t_offset", data=np.int64(t_offset))
+    return path
+
+
+def test_lecture_fenetree_donne_les_memes_voxels_que_le_chargement_complet(tmp_path):
+    """TUM-VIE ne tient pas en RAM : la fabrique lit les events par fenêtres (`ms_to_idx`).
+    Les voxels doivent être identiques à ceux du chargement complet, rectification comprise,
+    y compris avec des events pile sur les bornes de frames."""
+    from ms_model.io.loaders import load_events_prophesee_h5
+    from ms_model.representations.voxel import make_voxel_sequence
+    rng = np.random.default_rng(0)
+    H, W, n, off = 12, 16, 50_000, 1_600_000_000_000_000
+    t_us = np.sort(rng.integers(0, 2_000_000, n)).astype(np.int64)
+    frames_us = np.unique(np.concatenate([np.linspace(100_000, 1_900_000, 37).astype(np.int64),
+                                          t_us[[500, 20_000]]]))     # bornes pile sur des events
+    t_us[1000:1010] = t_us[1000]
+    h5 = _prophesee_h5(tmp_path / "ev.h5", t_us, rng.integers(0, W, n).astype(np.uint16),
+                       rng.integers(0, H, n).astype(np.uint16), rng.integers(0, 2, n).astype(np.uint8), off)
+    rm = str(_rmap(tmp_path / "r.h5", H, W, shift=(1.0, 0.0)))
+    fts = (frames_us + off) / 1e6
+    full = rectify_events(load_events_prophesee_h5(h5, H=H, W=W), rm)
+    win = H5EventWindows(str(h5), H, W, rm)
+    assert len(win) == n
+    for a in range(0, len(fts) - 1, 8):
+        f = fts[a:a + 9]
+        np.testing.assert_array_equal(make_voxel_sequence(win.window(f[0], f[-1]), f).numpy(),
+                                      make_voxel_sequence(full, f).numpy())
+
+
+def test_voxels_par_dichotomie_identiques_au_masque_par_frame():
+    """make_voxel_sequence borne chaque frame par searchsorted (O(log N)) au lieu d'un masque
+    sur tout le flux (O(N), des heures sur EDS) : même ensemble d'events, mêmes voxels."""
+    from ms_model.representations.voxel import make_voxel_sequence, to_voxel_grid
+    import torch
+    rng = np.random.default_rng(1)
+    t = np.sort(rng.uniform(0, 1, 20_000)); t[100:110] = t[100]
+    ev = np.stack([t, rng.integers(0, 16, t.size), rng.integers(0, 12, t.size),
+                   rng.integers(0, 2, t.size)], 1).astype(np.float64)
+    ea = EventArray(events=ev, H=12, W=16)
+    fts = np.sort(np.concatenate([[-0.1, t[100], 1.1], rng.uniform(0, 1, 20)]))
+    old = []
+    for i in range(1, len(fts)):
+        m = (ea.t >= fts[i - 1]) & (ea.t < fts[i])
+        old.append(torch.zeros(5, 12, 16) if m.sum() < 2
+                   else to_voxel_grid(ea.x[m], ea.y[m], ea.t[m], ea.p[m], H=12, W=16))
+    assert torch.equal(make_voxel_sequence(ea, fts), torch.stack(old))
 
 
 def test_factory_ne_retombe_jamais_sur_vanilla(tmp_path):

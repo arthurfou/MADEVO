@@ -42,11 +42,13 @@ def _read_rectify_map(path: str) -> np.ndarray:
         return np.array(f["rectify_map"])  # (H, W, 2) : (x, y) rectifiés
 
 
-def rectify_events(ea, rmap_path: Optional[str]):
+def rectify_events(ea, rmap_path: Optional[str], inplace: bool = False, chunk: int = 20_000_000):
     """EventArray aux coordonnées rectifiées, comme les itérateurs DEVO (`rectify_map[y, x]`).
 
     Sans carte (`None` ou fichier absent), l'EventArray est rendu tel quel. Les events qui
     tombent hors du capteur après rectification sont écartés par la voxelisation.
+    `inplace=True` réécrit `ea.events` sans copie (une scène EDS fait des dizaines de Go) ;
+    la carte est appliquée par tranches de `chunk` events pour borner les temporaires.
     """
     if rmap_path is None or not os.path.exists(rmap_path):
         return ea
@@ -54,10 +56,61 @@ def rectify_events(ea, rmap_path: Optional[str]):
     rmap = _read_rectify_map(rmap_path)
     assert rmap.shape[:2] == (ea.H, ea.W), \
         f"carte de rectification {rmap.shape[:2]} ≠ capteur {(ea.H, ea.W)} ({rmap_path})"
-    events = ea.events.copy()
-    rect = rmap[ea.y.astype(np.int64), ea.x.astype(np.int64)]
-    events[:, 1], events[:, 2] = rect[:, 0], rect[:, 1]
+    events = ea.events if inplace else ea.events.copy()
+    for a in range(0, len(events), chunk):
+        ev = events[a:a + chunk]
+        rect = rmap[ev[:, 2].astype(np.int64), ev[:, 1].astype(np.int64)]
+        ev[:, 1], ev[:, 2] = rect[:, 0], rect[:, 1]
     return EventArray(events=events, H=ea.H, W=ea.W, frame_ts=ea.frame_ts)
+
+
+class H5EventWindows:
+    """Source d'events fenêtrée sur un h5 Prophesee/DSEC (`events/{t,x,y,p}` + `ms_to_idx`).
+
+    TUM-VIE compte de 0,6 à 4,5 milliards d'events par scène (jusqu'à ~140 Go en EventArray
+    float64) : au lieu de tout charger, `window(t0, t1)` ne lit que les events de
+    [t0 − 1 ms, t1 + 1 ms] grâce à l'index `ms_to_idx`, les convertit exactement comme
+    `load_events_prophesee_h5` (t en s = (t_us + t_offset) / 1e6, float64) et les rectifie.
+    La fenêtre est un sur-ensemble de [t0, t1) : `make_voxel_sequence` refait la sélection
+    exacte, d'où des voxels identiques à ceux du chargement complet.
+    """
+
+    def __init__(self, h5_path: str, H: int, W: int, rmap_path: Optional[str] = None):
+        import h5py
+        try:
+            import hdf5plugin  # noqa: F401  (h5 compressés en Blosc/zstd)
+        except ImportError:
+            pass
+        self.h5 = h5py.File(str(h5_path), "r")
+        pre = "events/" if "events/x" in self.h5 else ""
+        self.d = {k: self.h5[pre + k] for k in "txyp"}
+        self.ms_to_idx = np.asarray(self.h5["ms_to_idx"], dtype=np.int64)
+        self.t_offset = int(self.h5["t_offset"][()]) if "t_offset" in self.h5 else 0
+        self.n = int(self.d["t"].shape[0])
+        self.H, self.W, self.rmap_path = H, W, rmap_path
+
+    def __len__(self) -> int:
+        return self.n
+
+    def _idx(self, ms: int) -> int:
+        if ms <= 0:
+            return 0
+        return int(self.ms_to_idx[ms]) if ms < len(self.ms_to_idx) else self.n
+
+    def window(self, t0_s: float, t1_s: float):
+        from ms_model.io.events import EventArray
+        ms0 = int(np.floor((t0_s * 1e6 - self.t_offset) / 1000)) - 1
+        ms1 = int(np.ceil((t1_s * 1e6 - self.t_offset) / 1000)) + 1
+        a, b = self._idx(ms0), self._idx(ms1)
+        events = np.empty((b - a, 4), dtype=np.float64)
+        events[:, 0] = self.d["t"][a:b]
+        events[:, 1] = self.d["x"][a:b]
+        events[:, 2] = self.d["y"][a:b]
+        events[:, 3] = self.d["p"][a:b]
+        events[:, 0] += self.t_offset
+        events[:, 0] /= 1e6
+        ea = EventArray(events=events, H=self.H, W=self.W)
+        return rectify_events(ea, self.rmap_path, inplace=True)
 
 
 def _make_provider(ea, frame_ts_s, ms_weights, ms_config, threshold, device):
@@ -124,6 +177,29 @@ def _load_vector(scenedir: str, side: str = "left") -> tuple:
     return ea, _frame_ts_s(tss_path), os.path.join(scenedir, f"rectify_map_{side}.h5")
 
 
+def _windows_eds(scenedir: str) -> tuple:
+    h5_path = glob.glob(os.path.join(scenedir, "events.h5"))[0]
+    tss_path = os.path.join(scenedir, "images_timestamps_us.txt")
+    return H5EventWindows(h5_path, 480, 640, os.path.join(scenedir, "rectify_map_calib0.h5")), _frame_ts_s(tss_path)
+
+
+def _windows_tumvie(scenedir: str, camID: int = 2) -> tuple:
+    side = "left" if camID == 2 else "right"
+    h5_files = glob.glob(os.path.join(scenedir, f"*events_{side}.h5"))
+    assert len(h5_files) == 1, f"Expected 1 TUM-VIE h5 in {scenedir}, found {h5_files}"
+    tss_path = os.path.join(scenedir, f"{side}_images_undistorted", f"image_timestamps_{side}.txt")
+    rmap = os.path.join(scenedir, f"rectify_map_{side}.h5")
+    return H5EventWindows(h5_files[0], 720, 1280, rmap), _frame_ts_s(tss_path)
+
+
+def _windows_vector(scenedir: str, side: str = "left") -> tuple:
+    seq = os.path.basename(scenedir)
+    h5_path = os.path.join(scenedir, f"{seq}1.synced.{side}_event.hdf5")
+    tss_path = os.path.join(scenedir, f"tss_imgs_us_{side}.txt")
+    rmap = os.path.join(scenedir, f"rectify_map_{side}.h5")
+    return H5EventWindows(h5_path, 480, 640, rmap), _frame_ts_s(tss_path)
+
+
 def _load_tumvie(scenedir: str, camID: int = 2) -> tuple:
     from ms_model.io.loaders import load_events_prophesee_h5
     side = "left" if camID == 2 else "right"
@@ -146,6 +222,14 @@ _LOADERS = {
     "mvsec": lambda sd, side, camID: _load_mvsec(sd, side),
     "vector": lambda sd, side, camID: _load_vector(sd, side),
     "tumvie": lambda sd, side, camID: _load_tumvie(sd, camID),
+}
+
+# Datasets lus par fenêtres (H5EventWindows) par la fabrique : trop d'events pour la RAM.
+# `_LOADERS` (chargement complet) reste utilisé par tools/check_cross_alignment.py.
+_WINDOWED = {
+    "eds": lambda sd, side, camID: _windows_eds(sd),
+    "tumvie": lambda sd, side, camID: _windows_tumvie(sd, camID),
+    "vector": lambda sd, side, camID: _windows_vector(sd, side),
 }
 
 
@@ -176,8 +260,11 @@ def make_ms_factory(
         print(f"[MS-factory/{dataset}] Chargement events pour '{scene}'…")
         # Pas de repli silencieux : un provider None ferait passer DEVO vanilla pour la
         # méthode apprise dans la table.
-        ea, frame_ts_s, rmap_path = loader(datapath_val, side, camID)
-        ea = rectify_events(ea, rmap_path)
+        if dataset in _WINDOWED:
+            ea, frame_ts_s = _WINDOWED[dataset](datapath_val, side, camID)
+        else:
+            ea, frame_ts_s, rmap_path = loader(datapath_val, side, camID)
+            ea = rectify_events(ea, rmap_path, inplace=True)
         if len(ea) == 0:
             raise RuntimeError(f"[MS-factory/{dataset}] aucun event dans '{scene}' ({datapath_val})")
         return _make_provider(ea, frame_ts_s, ms_weights, ms_config, threshold, device)

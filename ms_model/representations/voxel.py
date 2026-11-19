@@ -55,13 +55,24 @@ def make_voxel_sequence(ea: EventArray, frame_ts: np.ndarray, nb_of_time_bins: i
     Retourne un tenseur (len(frame_ts) - 1, nb_of_time_bins, H, W).
     """
     grids = []
+    t = ea.t
+    # Events triés (cas normal) : bornes par dichotomie, O(log N) par frame au lieu d'un masque
+    # sur tout le flux (O(N) par frame, des heures sur une longue scène EDS / TUM-VIE).
+    sorted_t = len(t) < 2 or bool(np.all(t[1:] >= t[:-1]))
+    if sorted_t:
+        bounds = np.searchsorted(t, np.asarray(frame_ts), side="left")
     for i in range(1, len(frame_ts)):
-        mask = (ea.t >= frame_ts[i - 1]) & (ea.t < frame_ts[i])
-        if mask.sum() < 2:
+        if sorted_t:
+            sel = slice(bounds[i - 1], bounds[i])
+            n = bounds[i] - bounds[i - 1]
+        else:
+            sel = (t >= frame_ts[i - 1]) & (t < frame_ts[i])
+            n = sel.sum()
+        if n < 2:
             grids.append(torch.zeros(nb_of_time_bins, ea.H, ea.W, dtype=torch.float32))
             continue
         grids.append(to_voxel_grid(
-            ea.x[mask], ea.y[mask], ea.t[mask], ea.p[mask],
+            ea.x[sel], ea.y[sel], t[sel], ea.p[sel],
             H=ea.H, W=ea.W, nb_of_time_bins=nb_of_time_bins,
         ))
     return torch.stack(grids)

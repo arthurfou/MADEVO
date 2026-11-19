@@ -37,3 +37,21 @@ datasets/
 pretrained/
   DEVO.pth
 ```
+
+## VECtor quand Google Drive bloque le serveur
+
+Les séquences VECtor ne sont que sur Google Drive, qui finit par refuser gdown depuis les
+serveurs (« Too many users have viewed or downloaded this file recently »). On les télécharge
+alors depuis une machine personnelle :
+
+```bash
+pip install gdown
+bash scripts/download/download_vector_local.sh --out ~/vector_dl \
+    --to royce:/Data/arthur.fournier/madevo/datasets/vector/
+```
+
+Le script n'extrait des zips d'images (16 Go) que `timestamp.txt`, seul fichier dont DEVO a
+besoin, et supprime le zip. Il est relançable ; un fichier que gdown refuse se télécharge dans
+un navigateur (le lien est affiché), se dépose dans `<out>/_navigateur/` et se range à la
+relance. Sur le serveur, `download_vector.sh` ne retélécharge alors rien et fait le
+prétraitement (`pp_vector.py` ne contrôle le nombre d'images que si elles sont présentes).

@@ -41,9 +41,15 @@ def _predict_scores(model, ea, frame_ts: np.ndarray, nb_time_bins: int, seq_len:
 
     probs = []
     n = len(frame_ts) - 1
+    # `ea` peut aussi être une source fenêtrée (méthode `window(t0, t1) -> EventArray`, cf.
+    # `utils.ms_dataset_factory.H5EventWindows`) : seuls les events de la tranche sont lus,
+    # pour les séquences de plusieurs milliards d'events (TUM-VIE) qui ne tiennent pas en RAM.
+    windowed = hasattr(ea, "window")
     with torch.no_grad():
         for start in range(0, n, seq_len):
-            chunk = make_voxel_sequence(ea, frame_ts[start:start + seq_len + 1],
+            fts = frame_ts[start:start + seq_len + 1]
+            src = ea.window(fts[0], fts[-1]) if windowed else ea
+            chunk = make_voxel_sequence(src, fts,
                                         nb_of_time_bins=nb_time_bins)
             logits = model(chunk.unsqueeze(0).to(device))          # (1, T, 1, Hp, Wp)
             probs.append(torch.sigmoid(logits)[0, :, 0].cpu())     # (T, Hp, Wp)

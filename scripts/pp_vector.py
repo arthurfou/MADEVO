@@ -33,7 +33,9 @@ def process_seq_vector(indirs, side="left"):
         num_imgs = len(imgin_list)
         tss_imgs = np.loadtxt(os.path.join(imgdirname, "timestamp.txt"), skiprows=2)
         tss_imgs = 1e6*(tss_imgs[:, 0] + tss_imgs[:, 1])/2
-        assert len(tss_imgs) == num_imgs
+        # Seul timestamp.txt sert (grille des frames). download_vector_local.sh n'extrait que lui
+        # des zips d'images (16 Go) : on ne vérifie le nombre d'images que si elles sont là.
+        assert num_imgs == 0 or len(tss_imgs) == num_imgs
         assert abs(np.diff(tss_imgs).mean()/1e3 - 33.3) < 3
 
         # 1) load poses & extrinsics
